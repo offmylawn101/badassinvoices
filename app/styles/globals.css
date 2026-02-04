@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --solana-purple: #9945FF;
+  --solana-green: #14F195;
+}
+
+body {
+  @apply bg-gray-50 text-gray-900;
+}
+
+.gradient-bg {
+  background: linear-gradient(135deg, var(--solana-purple), var(--solana-green));
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--solana-purple), var(--solana-green));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Wallet adapter styles override */
+.wallet-adapter-button {
+  @apply bg-solana-purple hover:bg-purple-600 !important;
+}
+
+.wallet-adapter-modal-wrapper {
+  @apply bg-white !important;
+}

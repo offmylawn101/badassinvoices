@@ -1,0 +1,20 @@
+[features]
+seeds = false
+skip-lint = true
+resolution = true
+
+[programs.localnet]
+invoicenow = "GyR2tNwj8UF4AUpiUjzXKqW9mdHcgQzuByqnyhGk6s3N"
+
+[programs.devnet]
+invoicenow = "GyR2tNwj8UF4AUpiUjzXKqW9mdHcgQzuByqnyhGk6s3N"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
