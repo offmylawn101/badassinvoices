@@ -2,6 +2,9 @@ node_modules/
 target/
 .anchor/
 .env
+.env.local
 *.log
 *.db
 package-lock.json
+.next/
+next-env.d.ts

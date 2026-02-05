@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import Link from "next/link";
+import Image from "next/image";
 import toast from "react-hot-toast";
 import { getInvoices, sendReminder, formatAmount, Invoice } from "@/lib/api";
 
@@ -60,7 +61,10 @@ export default function Dashboard() {
       <header className="gradient-bg">
         <div className="max-w-7xl mx-auto px-4 py-6">
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-white">InvoiceNow</h1>
+            <div className="flex items-center gap-3">
+              <Image src="/logo.png" alt="InvoiceNow" width={40} height={40} className="rounded-lg" />
+              <h1 className="text-2xl font-bold text-white">InvoiceNow</h1>
+            </div>
             <WalletMultiButton />
           </div>
         </div>
@@ -68,15 +72,50 @@ export default function Dashboard() {
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {!connected ? (
-          <div className="text-center py-20">
-            <h2 className="text-3xl font-bold gradient-text mb-4">
-              Instant Invoicing on Solana
+          <div className="text-center py-12">
+            {/* Hero Banner */}
+            <div className="mb-8 rounded-2xl overflow-hidden shadow-2xl">
+              <Image
+                src="/hero-banner.png"
+                alt="InvoiceNow - Instant Invoicing on Solana"
+                width={1200}
+                height={500}
+                className="w-full h-auto"
+                priority
+              />
+            </div>
+
+            <h2 className="text-4xl font-bold gradient-text mb-4">
+              Get Paid Instantly on Solana
             </h2>
-            <p className="text-gray-600 mb-8 max-w-md mx-auto">
-              Create professional invoices and get paid instantly in USDC or SOL.
-              No more waiting 30-60 days for payment.
+            <p className="text-gray-600 mb-8 max-w-lg mx-auto text-lg">
+              Create professional invoices and receive payment in USDC or SOL within seconds.
+              No more waiting 30-60 days. No $25-50 wire fees.
             </p>
-            <WalletMultiButton />
+
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-12">
+              <WalletMultiButton />
+              <span className="text-gray-400">to get started</span>
+            </div>
+
+            {/* Features */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto mt-12">
+              <div className="bg-white rounded-xl p-6 shadow-sm">
+                <div className="text-3xl mb-3">⚡</div>
+                <h3 className="font-bold mb-2">Instant Settlement</h3>
+                <p className="text-gray-600 text-sm">Payments arrive in seconds, not days</p>
+              </div>
+              <div className="bg-white rounded-xl p-6 shadow-sm">
+                <div className="text-3xl mb-3">🔒</div>
+                <h3 className="font-bold mb-2">Milestone Escrow</h3>
+                <p className="text-gray-600 text-sm">Secure payments for larger projects</p>
+              </div>
+              <div className="bg-white rounded-xl p-6 shadow-sm">
+                <div className="text-3xl mb-3">📱</div>
+                <h3 className="font-bold mb-2">Solana Pay QR</h3>
+                <p className="text-gray-600 text-sm">Clients pay with a simple scan</p>
+              </div>
+            </div>
           </div>
         ) : (
           <>
