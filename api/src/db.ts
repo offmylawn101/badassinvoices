@@ -109,6 +109,7 @@ db.exec(`
 const migrations = [
   { table: "lottery_entries", column: "tx_signature", sql: "ALTER TABLE lottery_entries ADD COLUMN tx_signature TEXT" },
   { table: "lottery_entries", column: "refund_tx_signature", sql: "ALTER TABLE lottery_entries ADD COLUMN refund_tx_signature TEXT" },
+  { table: "invoices", column: "line_items", sql: "ALTER TABLE invoices ADD COLUMN line_items TEXT" },
 ];
 
 for (const m of migrations) {
@@ -134,8 +135,8 @@ export function initDatabase() {
 // Invoice queries
 export const invoiceQueries = {
   create: db.prepare(`
-    INSERT INTO invoices (id, creator_wallet, client_email, amount, token_mint, due_date, memo, milestones, payment_link)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO invoices (id, creator_wallet, client_email, amount, token_mint, due_date, memo, milestones, payment_link, line_items)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
 
   getById: db.prepare(`SELECT * FROM invoices WHERE id = ?`),

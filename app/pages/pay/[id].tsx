@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/router";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { PublicKey, Transaction, SystemProgram } from "@solana/web3.js";
 import {
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
@@ -22,6 +22,12 @@ import {
   LotteryResult,
 } from "@/lib/api";
 
+interface PaymentLineItem {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+}
+
 interface PaymentData {
   id: string;
   creatorWallet: string;
@@ -31,6 +37,7 @@ interface PaymentData {
   memo: string | null;
   status: string;
   milestones: any[] | null;
+  lineItems: PaymentLineItem[] | null;
   paymentLink: string;
   qrCode: string;
 }
@@ -88,8 +95,6 @@ export default function PaymentPage() {
     if (!publicKey || !data) return;
     setCheckingBalance(true);
     try {
-      const SOL_MINT = "So11111111111111111111111111111111111111112";
-
       if (data.tokenMint === SOL_MINT) {
         const balance = await connection.getBalance(publicKey);
         setWalletBalance(balance);
@@ -117,11 +122,13 @@ export default function PaymentPage() {
     return doubleOrNothing ? data.amount * 2 : data.amount;
   }, [data, doubleOrNothing]);
 
-  // Check if wallet has enough balance
+  // Check if wallet has enough balance (include ~0.01 SOL fee buffer for SOL payments)
+  const SOL_MINT = "So11111111111111111111111111111111111111112";
   const hasEnoughBalance = useCallback(() => {
-    if (walletBalance === null) return false;
-    return walletBalance >= getPaymentAmount();
-  }, [walletBalance, getPaymentAmount]);
+    if (walletBalance === null || !data) return false;
+    const feeBuffer = data.tokenMint === SOL_MINT ? 10_000_000 : 0; // 0.01 SOL for tx fees + rent
+    return walletBalance >= getPaymentAmount() + feeBuffer;
+  }, [walletBalance, getPaymentAmount, data]);
 
   // Can afford double?
   const canAffordDouble = useCallback(() => {
@@ -145,7 +152,6 @@ export default function PaymentPage() {
     try {
       const recipientPubkey = new PublicKey(data.creatorWallet);
       const mintPubkey = new PublicKey(data.tokenMint);
-      const SOL_MINT = "So11111111111111111111111111111111111111112";
 
       const paymentAmount = getPaymentAmount();
       const invoiceAmount = data.amount;
@@ -273,7 +279,7 @@ export default function PaymentPage() {
         const premiumPaid = paymentAmount - data.amount;
 
         // Verify payment on-chain first (marks invoice as paid in DB)
-        await fetch(`/api/v1/hooks/verify-payment`, {
+        const verifyRes = await fetch(`/api/v1/hooks/verify-payment`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -282,6 +288,10 @@ export default function PaymentPage() {
             expectedAmount: data.amount,
           }),
         });
+        if (!verifyRes.ok) {
+          const err = await verifyRes.json().catch(() => ({ error: "Verification failed" }));
+          throw new Error(err.error || "Payment verification failed");
+        }
 
         // Create lottery entry — always riskSlider=50 for double or nothing
         const entry = await createLotteryEntry(
@@ -297,27 +307,23 @@ export default function PaymentPage() {
         const won = result.won;
 
         // Calculate wheel rotation based on BACKEND result
-        // 50/50 wheel — first 180deg is WIN, second 180deg is LOSE
-        const baseRotations = 5;
-        let finalAngle: number;
+        // 12 alternating segments (30° each): even=WIN, odd=LOSE
+        const winSegments = [0, 2, 4, 6, 8, 10];
+        const loseSegments = [1, 3, 5, 7, 9, 11];
+        const segments = won ? winSegments : loseSegments;
+        const segment = segments[Math.floor(Math.random() * segments.length)];
+        // Land in the middle of the segment (5° margin from edges for visual clarity)
+        const segmentStart = segment * 30;
+        const finalAngle = segmentStart + 5 + Math.random() * 20;
+        const totalRotation = 5 * 360 + finalAngle;
 
-        if (won) {
-          // Land in WIN section (0-180 degrees)
-          finalAngle = Math.random() * 180;
-        } else {
-          // Land in LOSE section (180-360 degrees)
-          finalAngle = 180 + Math.random() * 180;
-        }
-
-        const totalRotation = baseRotations * 360 + finalAngle;
-
-        // Reset wheel to 0 first, then show it
+        // Show the wheel at 0°, then trigger animation after paint
         setWheelRotation(0);
         setShowSpinWheel(true);
         setSpinning(true);
 
-        // Small delay to let React render wheel at 0 degrees, then trigger animation
-        await new Promise(resolve => setTimeout(resolve, 50));
+        // Wait for two animation frames to ensure browser has painted 0° state
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         setWheelRotation(totalRotation);
 
         // Wait for spin animation to complete
@@ -333,7 +339,7 @@ export default function PaymentPage() {
         }
       } else {
         // Standard payment
-        await fetch(`/api/v1/hooks/verify-payment`, {
+        const stdVerifyRes = await fetch(`/api/v1/hooks/verify-payment`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -341,7 +347,13 @@ export default function PaymentPage() {
             txSignature: signature,
           }),
         });
-        toast.success("Payment sent!");
+        if (!stdVerifyRes.ok) {
+          const err = await stdVerifyRes.json().catch(() => ({ error: "Verification failed" }));
+          console.error("Payment verification failed:", err);
+          toast.error("Payment sent but verification failed. It will be confirmed shortly.");
+        } else {
+          toast.success("Payment sent!");
+        }
       }
 
       setData({ ...data, status: "paid" });
@@ -398,7 +410,7 @@ export default function PaymentPage() {
                     {[...Array(20)].map((_, i) => (
                       <div
                         key={i}
-                        className="absolute w-2 h-2 sm:w-3 sm:h-3 rounded-full bg-gold wheel-light"
+                        className="absolute w-2 h-2 sm:w-3 sm:h-3 rounded-full bg-gold wheel-light -translate-x-1/2 -translate-y-1/2"
                         style={{
                           top: `${50 - 46 * Math.cos((i * 18 * Math.PI) / 180)}%`,
                           left: `${50 + 46 * Math.sin((i * 18 * Math.PI) / 180)}%`,
@@ -505,7 +517,12 @@ export default function PaymentPage() {
                   </>
                 )}
                 <button
-                  onClick={() => setShowSpinWheel(false)}
+                  onClick={() => {
+                    setShowSpinWheel(false);
+                    setSpinResult(null);
+                    setSpinning(false);
+                    setWheelRotation(0);
+                  }}
                   className="bg-gradient-to-r from-gold to-gold-dark text-casino-black px-8 py-3 rounded-lg font-bold hover:from-gold-dark hover:to-gold transition"
                 >
                   Close
@@ -550,9 +567,41 @@ export default function PaymentPage() {
               <p className="font-mono font-medium text-lg text-gray-300">{data.id}</p>
             </div>
 
+            {/* Line Items Table */}
+            {data.lineItems && data.lineItems.length > 0 && (
+              <div className="mb-6 border border-gold/20 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-casino-black/50 text-gray-500">
+                      <th className="text-left px-4 py-2 font-medium">Description</th>
+                      <th className="text-center px-2 py-2 font-medium">Qty</th>
+                      <th className="text-right px-3 py-2 font-medium">Price</th>
+                      <th className="text-right px-4 py-2 font-medium">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.lineItems.map((item, i) => (
+                      <tr key={i} className="border-t border-gray-700/50">
+                        <td className="px-4 py-2 text-gray-300">{item.description}</td>
+                        <td className="px-2 py-2 text-center text-gray-400">{item.quantity}</td>
+                        <td className="px-3 py-2 text-right text-gray-400">
+                          {formatAmount(item.unitPrice, data.tokenMint)}
+                        </td>
+                        <td className="px-4 py-2 text-right text-gray-300">
+                          {formatAmount(item.quantity * item.unitPrice, data.tokenMint)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
             {/* Amount */}
             <div className="text-center mb-6">
-              <p className="text-gray-500 text-sm">Invoice Amount</p>
+              <p className="text-gray-500 text-sm">
+                {data.lineItems && data.lineItems.length > 0 ? "Total" : "Invoice Amount"}
+              </p>
               <p className="text-4xl font-bold gradient-text">
                 {formatAmount(data.amount, data.tokenMint)}
               </p>

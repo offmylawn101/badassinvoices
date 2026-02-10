@@ -7,8 +7,8 @@ import { POOL_PUBKEY, sendRefund } from "../services/pool-wallet.js";
 
 const router = Router();
 
-// Admin key for protected endpoints (set in env or use default for hackathon)
-const ADMIN_KEY = process.env.ADMIN_API_KEY || "badass-admin-key";
+// Admin key for protected endpoints (must be set in env)
+const ADMIN_KEY = process.env.ADMIN_API_KEY || "";
 
 // Default pool settings
 const DEFAULT_HOUSE_EDGE_BPS = 500; // 5%
@@ -197,36 +197,34 @@ router.post("/entry", async (req: Request, res: Response) => {
       return;
     }
 
-    // Check for existing pending entry on this invoice
-    const existingEntry = lotteryEntryQueries.getByInvoice.get(invoiceId) as any;
-    if (existingEntry && existingEntry.status === "pending_vrf") {
-      res.status(400).json({ error: "Lottery entry already exists for this invoice" });
-      return;
-    }
-
-    // Get or create pool
-    let pool = lotteryPoolQueries.getByTokenMint.get(invoice.token_mint) as any;
-    if (!pool) {
-      const poolId = uuidv4();
-      lotteryPoolQueries.create.run(
-        poolId,
-        invoice.token_mint,
-        DEFAULT_HOUSE_EDGE_BPS,
-        DEFAULT_MIN_RESERVE_BPS,
-        DEFAULT_MAX_WIN_BPS,
-        null
-      );
-      pool = lotteryPoolQueries.getByTokenMint.get(invoice.token_mint) as any;
-    }
-
     // Win probability = slider value * 100 bps (0-50% -> 0-5000 bps)
     // House edge is built into the premium multiplier on the frontend
     const sliderValue = typeof riskSlider === "number" ? riskSlider : 0;
     const winProbabilityBps = Math.min(Math.max(Math.floor(sliderValue * 100), 0), 5000);
 
-    // Create entry + update pool atomically
+    // Create entry + update pool atomically (duplicate check inside transaction to prevent races)
     const entryId = uuidv4();
     const createEntryTx = db.transaction(() => {
+      // Check for existing pending entry inside transaction
+      const existingEntry = lotteryEntryQueries.getByInvoice.get(invoiceId) as any;
+      if (existingEntry && existingEntry.status === "pending_vrf") {
+        return { error: "Lottery entry already exists for this invoice" };
+      }
+
+      // Get or create pool
+      let pool = lotteryPoolQueries.getByTokenMint.get(invoice.token_mint) as any;
+      if (!pool) {
+        const poolId = uuidv4();
+        lotteryPoolQueries.create.run(
+          poolId,
+          invoice.token_mint,
+          DEFAULT_HOUSE_EDGE_BPS,
+          DEFAULT_MIN_RESERVE_BPS,
+          DEFAULT_MAX_WIN_BPS,
+          null
+        );
+      }
+
       lotteryEntryQueries.create.run(
         entryId,
         invoiceId,
@@ -242,8 +240,15 @@ router.post("/entry", async (req: Request, res: Response) => {
         premiumAmount,
         invoice.token_mint
       );
+
+      return null;
     });
-    createEntryTx();
+
+    const txError = createEntryTx();
+    if (txError) {
+      res.status(400).json(txError);
+      return;
+    }
 
     res.json({
       id: entryId,
@@ -490,7 +495,7 @@ router.post("/pool/init", async (req: Request, res: Response) => {
   try {
     // Require admin API key
     const apiKey = req.headers["x-admin-key"] || req.body.adminKey;
-    if (apiKey !== ADMIN_KEY) {
+    if (!ADMIN_KEY || apiKey !== ADMIN_KEY) {
       res.status(403).json({ error: "Unauthorized" });
       return;
     }

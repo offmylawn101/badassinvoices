@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { invoiceQueries } from "../db.js";
+import { db, invoiceQueries } from "../db.js";
 import { sendPaymentConfirmation } from "../services/email.js";
 import { verifyPayment } from "../services/solana-pay.js";
 
@@ -62,32 +62,37 @@ async function processTransaction(tx: any) {
 }
 
 async function checkPayment(toWallet: string, amount: number, signature: string, mint: string) {
-  // Find pending invoices for this wallet
-  const pendingInvoices = invoiceQueries.getPending.all() as any[];
+  // Atomically find and update a matching pending invoice
+  const matchInvoice = db.transaction(() => {
+    const pendingInvoices = invoiceQueries.getPending.all() as any[];
 
-  for (const invoice of pendingInvoices) {
-    // Check if payment matches invoice
-    if (
-      invoice.creator_wallet === toWallet &&
-      invoice.token_mint === mint &&
-      invoice.amount <= amount
-    ) {
-      // Mark invoice as paid
-      invoiceQueries.updateStatus.run(
-        "paid",
-        Math.floor(Date.now() / 1000),
-        signature,
-        invoice.id
-      );
+    for (const invoice of pendingInvoices) {
+      if (
+        invoice.creator_wallet === toWallet &&
+        invoice.token_mint === mint &&
+        invoice.amount <= amount
+      ) {
+        // Re-check status inside transaction to prevent double-payment
+        const current = invoiceQueries.getById.get(invoice.id) as any;
+        if (current.status !== "pending") continue;
 
-      console.log(`Invoice ${invoice.id} marked as paid. TX: ${signature}`);
-
-      // Send confirmation email if client email exists
-      if (invoice.client_email) {
-        await sendPaymentConfirmation(invoice, signature);
+        invoiceQueries.updateStatus.run(
+          "paid",
+          Math.floor(Date.now() / 1000),
+          signature,
+          invoice.id
+        );
+        return invoice;
       }
+    }
+    return null;
+  });
 
-      break; // Only match one invoice per transfer
+  const matched = matchInvoice();
+  if (matched) {
+    console.log(`Invoice ${matched.id} marked as paid. TX: ${signature}`);
+    if (matched.client_email) {
+      await sendPaymentConfirmation(matched, signature);
     }
   }
 }

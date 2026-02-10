@@ -16,6 +16,7 @@ export interface Invoice {
   tx_signature: string | null;
   payment_link: string;
   milestones: Milestone[] | null;
+  line_items: LineItem[] | null;
   reminder_count: number;
 }
 
@@ -26,6 +27,12 @@ export interface Milestone {
   completed_at?: number;
 }
 
+export interface LineItem {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+}
+
 export interface CreateInvoiceParams {
   creatorWallet: string;
   clientEmail?: string;
@@ -34,6 +41,7 @@ export interface CreateInvoiceParams {
   dueDate: number;
   memo?: string;
   milestones?: Milestone[];
+  lineItems?: LineItem[];
 }
 
 export interface Client {

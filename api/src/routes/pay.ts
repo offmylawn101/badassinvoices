@@ -4,6 +4,16 @@ import { generateQRCode, createSolanaPayTransaction } from "../services/solana-p
 
 const router = Router();
 
+function safeJsonParse(json: string | null): any {
+  if (!json) return null;
+  try {
+    return JSON.parse(json);
+  } catch {
+    console.error("Failed to parse JSON from DB:", json.substring(0, 100));
+    return null;
+  }
+}
+
 // Get payment page data for an invoice
 router.get("/:id", async (req: Request, res: Response) => {
   try {
@@ -18,8 +28,9 @@ router.get("/:id", async (req: Request, res: Response) => {
     // Generate QR code
     const qrCode = await generateQRCode(invoice.payment_link);
 
-    // Parse milestones
-    const milestones = invoice.milestones ? JSON.parse(invoice.milestones) : null;
+    // Parse milestones and line items
+    const milestones = safeJsonParse(invoice.milestones);
+    const lineItems = safeJsonParse(invoice.line_items);
 
     res.json({
       id: invoice.id,
@@ -30,6 +41,7 @@ router.get("/:id", async (req: Request, res: Response) => {
       memo: invoice.memo,
       status: invoice.status,
       milestones,
+      lineItems,
       paymentLink: invoice.payment_link,
       qrCode,
     });

@@ -7,6 +7,16 @@ import { PublicKey } from "@solana/web3.js";
 
 const router = Router();
 
+function safeJsonParse(json: string | null): any {
+  if (!json) return null;
+  try {
+    return JSON.parse(json);
+  } catch {
+    console.error("Failed to parse JSON from DB:", json.substring(0, 100));
+    return null;
+  }
+}
+
 function isValidPublicKey(key: string): boolean {
   try {
     new PublicKey(key);
@@ -28,12 +38,17 @@ interface CreateInvoiceBody {
     description: string;
     amount: number;
   }>;
+  lineItems?: Array<{
+    description: string;
+    quantity: number;
+    unitPrice: number;
+  }>;
 }
 
 // Create invoice
 router.post("/", async (req: Request<{}, {}, CreateInvoiceBody>, res: Response) => {
   try {
-    const { creatorWallet, clientEmail, clientTwitter, amount, tokenMint, dueDate, memo, milestones } = req.body;
+    const { creatorWallet, clientEmail, clientTwitter, amount, tokenMint, dueDate, memo, milestones, lineItems } = req.body;
 
     if (!creatorWallet || !amount || !tokenMint || !dueDate) {
       res.status(400).json({ error: "Missing required fields" });
@@ -72,7 +87,8 @@ router.post("/", async (req: Request<{}, {}, CreateInvoiceBody>, res: Response) 
       dueDate,
       memo || null,
       milestones ? JSON.stringify(milestones) : null,
-      paymentLink
+      paymentLink,
+      lineItems ? JSON.stringify(lineItems) : null
     );
 
     // If we have client email, create/update client record
@@ -135,7 +151,8 @@ router.get("/", (req: Request, res: Response) => {
     // Parse milestones JSON for each invoice
     const parsed = (invoices as any[]).map((inv) => ({
       ...inv,
-      milestones: inv.milestones ? JSON.parse(inv.milestones) : null,
+      milestones: safeJsonParse(inv.milestones),
+      line_items: safeJsonParse(inv.line_items),
     }));
 
     res.json(parsed);
@@ -158,7 +175,8 @@ router.get("/:id", (req: Request, res: Response) => {
 
     res.json({
       ...invoice,
-      milestones: invoice.milestones ? JSON.parse(invoice.milestones) : null,
+      milestones: safeJsonParse(invoice.milestones),
+      line_items: safeJsonParse(invoice.line_items),
     });
   } catch (error) {
     console.error("Error fetching invoice:", error);
@@ -201,7 +219,12 @@ router.post("/:id/remind", async (req: Request, res: Response) => {
 router.patch("/:id/status", (req: Request, res: Response) => {
   try {
     // Require admin auth for direct status updates
-    const adminKey = process.env.ADMIN_KEY || "badass-admin-key";
+    const adminKey = process.env.ADMIN_API_KEY;
+    if (!adminKey) {
+      console.error("ADMIN_API_KEY not set");
+      res.status(500).json({ error: "Server misconfigured" });
+      return;
+    }
     const authHeader = req.headers["x-admin-key"];
     if (authHeader !== adminKey) {
       res.status(401).json({ error: "Unauthorized" });

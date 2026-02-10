@@ -1,8 +1,11 @@
 import { PublicKey, Transaction, SystemProgram, Connection, Keypair } from "@solana/web3.js";
 import {
   createTransferInstruction,
+  createAssociatedTokenAccountInstruction,
   getAssociatedTokenAddress,
+  getAccount,
   TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import QRCode from "qrcode";
 import crypto from "crypto";
@@ -115,6 +118,22 @@ export async function createSolanaPayTransaction(
     const payerAta = await getAssociatedTokenAddress(mintPubkey, payerPubkey);
     const recipientAta = await getAssociatedTokenAddress(mintPubkey, recipientPubkey);
 
+    // Create recipient ATA if it doesn't exist
+    try {
+      await getAccount(connection, recipientAta);
+    } catch {
+      transaction.add(
+        createAssociatedTokenAccountInstruction(
+          payerPubkey,
+          recipientAta,
+          recipientPubkey,
+          mintPubkey,
+          TOKEN_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        )
+      );
+    }
+
     transaction.add(
       createTransferInstruction(
         payerAta,
@@ -223,8 +242,8 @@ export async function verifyPayment(
       );
 
       // Calculate amount received
-      const preBal = preTokenBalance ? parseInt(preTokenBalance.uiTokenAmount.amount) : 0;
-      const postBal = postTokenBalance ? parseInt(postTokenBalance.uiTokenAmount.amount) : 0;
+      const preBal = preTokenBalance ? Number(preTokenBalance.uiTokenAmount.amount) : 0;
+      const postBal = postTokenBalance ? Number(postTokenBalance.uiTokenAmount.amount) : 0;
       const actualAmount = postBal - preBal;
 
       if (actualAmount < expectedAmount) {
@@ -264,7 +283,7 @@ export async function getTokenBalance(
     const ata = await getAssociatedTokenAddress(mintPubkey, walletPubkey);
 
     const accountInfo = await connection.getTokenAccountBalance(ata);
-    return parseInt(accountInfo.value.amount);
+    return Number(accountInfo.value.amount);
   } catch (error) {
     console.error("Balance check error:", error);
     return 0;

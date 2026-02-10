@@ -1,8 +1,6 @@
+import "dotenv/config";
 import cron from "node-cron";
-import dotenv from "dotenv";
 import { InvoiceAgent } from "./index.js";
-
-dotenv.config();
 
 const agent = new InvoiceAgent();
 
@@ -43,7 +41,7 @@ cron.schedule("0 8 * * 1", async () => {
 
   try {
     const result = await agent.run(
-      "Generate a summary report of all invoices and their status."
+      "Get all creator wallets, then generate a summary report for each creator."
     );
     console.log("Agent completed:", result);
   } catch (error) {

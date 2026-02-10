@@ -4,7 +4,7 @@ import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useRouter } from "next/router";
 import Link from "next/link";
 import toast from "react-hot-toast";
-import { createInvoice, Milestone } from "@/lib/api";
+import { createInvoice, Milestone, LineItem } from "@/lib/api";
 
 const TOKENS = [
   {
@@ -27,6 +27,7 @@ export default function CreateInvoice() {
 
   const [loading, setLoading] = useState(false);
   const [showMilestones, setShowMilestones] = useState(false);
+  const [showLineItems, setShowLineItems] = useState(false);
   const [form, setForm] = useState({
     clientEmail: "",
     amount: "",
@@ -35,6 +36,7 @@ export default function CreateInvoice() {
     memo: "",
   });
   const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [newInvoice, setNewInvoice] = useState<{
     id: string;
     paymentLink: string;
@@ -54,6 +56,25 @@ export default function CreateInvoice() {
     setMilestones(milestones.filter((_, i) => i !== index));
   }
 
+  function addLineItem() {
+    setLineItems([...lineItems, { description: "", quantity: 1, unitPrice: 0 }]);
+  }
+
+  function updateLineItem(index: number, field: string, value: string | number) {
+    const updated = [...lineItems];
+    updated[index] = { ...updated[index], [field]: value };
+    setLineItems(updated);
+  }
+
+  function removeLineItem(index: number) {
+    setLineItems(lineItems.filter((_, i) => i !== index));
+  }
+
+  const lineItemsTotal = lineItems.reduce(
+    (sum, item) => sum + item.quantity * item.unitPrice,
+    0
+  );
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
@@ -62,8 +83,14 @@ export default function CreateInvoice() {
       return;
     }
 
-    if (!form.amount || !form.dueDate) {
+    const hasLineItems = showLineItems && lineItems.length > 0;
+    if ((!hasLineItems && !form.amount) || !form.dueDate) {
       toast.error("Please fill in all required fields");
+      return;
+    }
+
+    if (hasLineItems && lineItems.some((li) => !li.description || li.unitPrice <= 0)) {
+      toast.error("All line items need a description and price");
       return;
     }
 
@@ -71,7 +98,7 @@ export default function CreateInvoice() {
 
     try {
       // Convert amount to smallest unit
-      const amountDecimal = parseFloat(form.amount);
+      const amountDecimal = hasLineItems ? lineItemsTotal : parseFloat(form.amount);
       const amount = Math.round(amountDecimal * Math.pow(10, form.token.decimals));
 
       // Convert date to timestamp
@@ -85,6 +112,14 @@ export default function CreateInvoice() {
           }))
         : undefined;
 
+      // Convert line item unitPrice to smallest token units
+      const processedLineItems = hasLineItems
+        ? lineItems.map((li) => ({
+            ...li,
+            unitPrice: Math.round(li.unitPrice * Math.pow(10, form.token.decimals)),
+          }))
+        : undefined;
+
       const invoice = await createInvoice({
         creatorWallet: publicKey.toString(),
         clientEmail: form.clientEmail || undefined,
@@ -93,6 +128,7 @@ export default function CreateInvoice() {
         dueDate,
         memo: form.memo || undefined,
         milestones: processedMilestones,
+        lineItems: processedLineItems,
       });
 
       setNewInvoice({
@@ -228,42 +264,43 @@ export default function CreateInvoice() {
               </p>
             </div>
 
-            {/* Amount & Token */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
-                  Amount *
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-2 text-gray-500">
-                    {form.token.symbol}
-                  </span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={form.amount}
-                    onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                    placeholder="0.00"
-                    className={`w-full px-4 py-2 bg-casino-black border border-gold/30 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-gold focus:border-transparent ${
-                      form.token.symbol ? "pl-6" : ""
-                    }`}
-                    required
-                  />
+            {/* Currency selector (always visible) */}
+            <div className={showLineItems ? "" : "grid grid-cols-2 gap-4"}>
+              {/* Amount (hidden when line items active) */}
+              {!showLineItems && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    Amount *
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-gray-500">
+                      {form.token.symbol}
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={form.amount}
+                      onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                      placeholder="0.00"
+                      className={`w-full px-4 py-2 bg-casino-black border border-gold/30 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-gold focus:border-transparent ${
+                        form.token.symbol ? "pl-6" : ""
+                      }`}
+                      required
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-1">
                   Currency
                 </label>
                 <select
                   value={form.token.mint}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      token: TOKENS.find((t) => t.mint === e.target.value)!,
-                    })
-                  }
+                  onChange={(e) => {
+                    const found = TOKENS.find((t) => t.mint === e.target.value);
+                    if (found) setForm({ ...form, token: found });
+                  }}
                   className="w-full px-4 py-2 bg-casino-black border border-gold/30 rounded-lg text-white focus:ring-2 focus:ring-gold focus:border-transparent"
                 >
                   {TOKENS.map((token) => (
@@ -274,6 +311,92 @@ export default function CreateInvoice() {
                 </select>
               </div>
             </div>
+
+            {/* Line Items Toggle */}
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showLineItems}
+                  onChange={(e) => {
+                    setShowLineItems(e.target.checked);
+                    if (e.target.checked && lineItems.length === 0) {
+                      setLineItems([{ description: "", quantity: 1, unitPrice: 0 }]);
+                    }
+                  }}
+                  className="w-4 h-4 text-gold rounded border-gold/30 bg-casino-black focus:ring-gold"
+                />
+                <span className="font-medium text-gray-300">Itemize charges</span>
+              </label>
+              <p className="text-xs text-gray-500 mt-1">
+                Break down the invoice into individual line items
+              </p>
+            </div>
+
+            {/* Line Items */}
+            {showLineItems && (
+              <div className="space-y-3 bg-casino-black/50 p-4 rounded-lg border border-gold/20">
+                <div className="grid grid-cols-[1fr_70px_100px_32px] gap-2 text-xs text-gray-500 px-1">
+                  <span>Description</span>
+                  <span>Qty</span>
+                  <span>Unit Price</span>
+                  <span></span>
+                </div>
+                {lineItems.map((item, index) => (
+                  <div key={index} className="grid grid-cols-[1fr_70px_100px_32px] gap-2 items-center">
+                    <input
+                      type="text"
+                      value={item.description}
+                      onChange={(e) => updateLineItem(index, "description", e.target.value)}
+                      placeholder="Design work"
+                      className="w-full px-3 py-2 bg-casino-black border border-gold/30 rounded-lg text-sm text-white placeholder-gray-500"
+                    />
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={item.quantity}
+                      onChange={(e) => updateLineItem(index, "quantity", parseInt(e.target.value) || 1)}
+                      className="w-full px-2 py-2 bg-casino-black border border-gold/30 rounded-lg text-sm text-white text-center"
+                    />
+                    <div className="relative">
+                      <span className="absolute left-2 top-2 text-gray-500 text-sm">{form.token.symbol}</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={item.unitPrice || ""}
+                        onChange={(e) => updateLineItem(index, "unitPrice", parseFloat(e.target.value) || 0)}
+                        placeholder="0.00"
+                        className={`w-full px-2 py-2 bg-casino-black border border-gold/30 rounded-lg text-sm text-white placeholder-gray-500 ${form.token.symbol ? "pl-5" : ""}`}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeLineItem(index)}
+                      className="text-lucky-red hover:text-red-400 p-1 text-center"
+                    >
+                      x
+                    </button>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between pt-2">
+                  <button
+                    type="button"
+                    onClick={addLineItem}
+                    className="text-gold hover:underline text-sm"
+                  >
+                    + Add Line Item
+                  </button>
+                  <div className="text-right">
+                    <span className="text-gray-500 text-sm mr-2">Total:</span>
+                    <span className="text-gold font-bold">
+                      {form.token.symbol}{lineItemsTotal.toFixed(2)} {form.token.name}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Due Date */}
             <div>
