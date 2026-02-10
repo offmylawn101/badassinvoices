@@ -2,13 +2,24 @@ import { Router, Request, Response } from "express";
 import { nanoid } from "nanoid";
 import { invoiceQueries, clientQueries } from "../db.js";
 import { generatePaymentLink, generateQRCode } from "../services/solana-pay.js";
-import { sendReminderEmail } from "../services/email.js";
+import { sendReminderEmail, sendInvoiceNotification } from "../services/email.js";
+import { PublicKey } from "@solana/web3.js";
 
 const router = Router();
+
+function isValidPublicKey(key: string): boolean {
+  try {
+    new PublicKey(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 interface CreateInvoiceBody {
   creatorWallet: string;
   clientEmail?: string;
+  clientTwitter?: string;
   amount: number;
   tokenMint: string;
   dueDate: number;
@@ -22,10 +33,30 @@ interface CreateInvoiceBody {
 // Create invoice
 router.post("/", async (req: Request<{}, {}, CreateInvoiceBody>, res: Response) => {
   try {
-    const { creatorWallet, clientEmail, amount, tokenMint, dueDate, memo, milestones } = req.body;
+    const { creatorWallet, clientEmail, clientTwitter, amount, tokenMint, dueDate, memo, milestones } = req.body;
 
     if (!creatorWallet || !amount || !tokenMint || !dueDate) {
       res.status(400).json({ error: "Missing required fields" });
+      return;
+    }
+
+    if (!isValidPublicKey(creatorWallet)) {
+      res.status(400).json({ error: "Invalid creator wallet address" });
+      return;
+    }
+
+    if (!isValidPublicKey(tokenMint)) {
+      res.status(400).json({ error: "Invalid token mint address" });
+      return;
+    }
+
+    if (!Number.isInteger(amount) || amount <= 0) {
+      res.status(400).json({ error: "Amount must be a positive integer" });
+      return;
+    }
+
+    if (!Number.isInteger(dueDate) || dueDate <= 0) {
+      res.status(400).json({ error: "Invalid due date" });
       return;
     }
 
@@ -44,7 +75,39 @@ router.post("/", async (req: Request<{}, {}, CreateInvoiceBody>, res: Response) 
       paymentLink
     );
 
+    // If we have client email, create/update client record
+    if (clientEmail) {
+      try {
+        const existingClient = clientQueries.getByEmail.get(clientEmail) as any;
+        if (existingClient) {
+          if (clientTwitter) {
+            clientQueries.updateTwitterHandle.run(clientTwitter, clientEmail);
+          }
+        } else {
+          const clientId = nanoid(10);
+          clientQueries.create.run(
+            clientId,
+            creatorWallet,
+            clientEmail.split("@")[0], // Use email prefix as name
+            clientEmail,
+            null, // wallet
+            clientTwitter || null
+          );
+        }
+      } catch (e) {
+        console.error("Error updating client record:", e);
+        // Non-fatal, continue
+      }
+    }
+
     const invoice = invoiceQueries.getById.get(id) as Record<string, unknown>;
+
+    // Send invoice notification email to client (non-blocking)
+    if (clientEmail) {
+      sendInvoiceNotification(invoice as any).catch((e) =>
+        console.error("Failed to send invoice notification:", e)
+      );
+    }
 
     res.status(201).json({
       ...invoice,
@@ -134,11 +197,25 @@ router.post("/:id/remind", async (req: Request, res: Response) => {
   }
 });
 
-// Update invoice status (for on-chain sync)
+// Update invoice status (for on-chain sync) - requires admin key
 router.patch("/:id/status", (req: Request, res: Response) => {
   try {
+    // Require admin auth for direct status updates
+    const adminKey = process.env.ADMIN_KEY || "badass-admin-key";
+    const authHeader = req.headers["x-admin-key"];
+    if (authHeader !== adminKey) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
     const { id } = req.params;
     const { status, txSignature } = req.body;
+
+    const validStatuses = ["pending", "paid", "cancelled", "escrow_funded"];
+    if (!status || !validStatuses.includes(status)) {
+      res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` });
+      return;
+    }
 
     const invoice = invoiceQueries.getById.get(id);
     if (!invoice) {
@@ -178,7 +255,7 @@ router.get("/:id/qr", async (req: Request, res: Response) => {
 // Client management
 router.post("/clients", (req: Request, res: Response) => {
   try {
-    const { ownerWallet, name, email, wallet } = req.body;
+    const { ownerWallet, name, email, wallet, twitterHandle } = req.body;
 
     if (!ownerWallet || !name) {
       res.status(400).json({ error: "Owner wallet and name required" });
@@ -186,7 +263,14 @@ router.post("/clients", (req: Request, res: Response) => {
     }
 
     const id = nanoid(10);
-    clientQueries.create.run(id, ownerWallet, name, email || null, wallet || null);
+    clientQueries.create.run(
+      id,
+      ownerWallet,
+      name,
+      email || null,
+      wallet || null,
+      twitterHandle || null
+    );
 
     const client = clientQueries.getById.get(id);
     res.status(201).json(client);

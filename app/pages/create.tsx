@@ -110,19 +110,20 @@ export default function CreateInvoice() {
 
   if (!connected) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <header className="gradient-bg">
+      <div className="min-h-screen bg-casino-black">
+        <header className="gradient-bg border-b border-gold/20">
           <div className="max-w-7xl mx-auto px-4 py-6">
             <div className="flex items-center justify-between">
-              <Link href="/" className="text-2xl font-bold text-white">
-                InvoiceNow
+              <Link href="/" className="flex items-center gap-3">
+                <img src="/logo.png?v=3" alt="BadassInvoices" className="w-10 h-10 rounded-lg" />
+                <span className="text-2xl font-bold text-gold">BadassInvoices</span>
               </Link>
               <WalletMultiButton />
             </div>
           </div>
         </header>
         <div className="text-center py-20">
-          <p className="text-gray-600 mb-4">Connect your wallet to create an invoice</p>
+          <p className="text-gray-400 mb-4">Connect your wallet to create an invoice</p>
           <WalletMultiButton />
         </div>
       </div>
@@ -131,12 +132,13 @@ export default function CreateInvoice() {
 
   if (newInvoice) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <header className="gradient-bg">
+      <div className="min-h-screen bg-casino-black">
+        <header className="gradient-bg border-b border-gold/20">
           <div className="max-w-7xl mx-auto px-4 py-6">
             <div className="flex items-center justify-between">
-              <Link href="/" className="text-2xl font-bold text-white">
-                InvoiceNow
+              <Link href="/" className="flex items-center gap-3">
+                <img src="/logo.png?v=3" alt="BadassInvoices" className="w-10 h-10 rounded-lg" />
+                <span className="text-2xl font-bold text-gold">BadassInvoices</span>
               </Link>
               <WalletMultiButton />
             </div>
@@ -144,23 +146,26 @@ export default function CreateInvoice() {
         </header>
 
         <main className="max-w-2xl mx-auto px-4 py-12">
-          <div className="bg-white rounded-xl p-8 shadow-sm text-center">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <span className="text-3xl">&#10003;</span>
+          <div className="bg-casino-dark rounded-xl p-8 shadow-lg text-center border border-gold/20">
+            <div className="w-16 h-16 bg-lucky-green/20 border border-lucky-green rounded-full flex items-center justify-center mx-auto mb-4">
+              <span className="text-3xl text-lucky-green">&#10003;</span>
             </div>
-            <h1 className="text-2xl font-bold mb-2">Invoice Created!</h1>
-            <p className="text-gray-600 mb-6">
+            <h1 className="text-2xl font-bold mb-2 text-gold">Invoice Created!</h1>
+            <p className="text-gray-400 mb-2">
               Share the payment link with your client
             </p>
+            <p className="text-lucky-green text-sm mb-6 font-medium">
+              Your client can SPIN TO WIN when they pay!
+            </p>
 
-            <div className="bg-gray-50 rounded-lg p-4 mb-6">
+            <div className="bg-casino-black/50 rounded-lg p-4 mb-6 border border-gold/20">
               <p className="text-sm text-gray-500 mb-1">Invoice ID</p>
-              <p className="font-mono font-medium">{newInvoice.id}</p>
+              <p className="font-mono font-medium text-gold">{newInvoice.id}</p>
             </div>
 
-            <div className="bg-gray-50 rounded-lg p-4 mb-6">
+            <div className="bg-casino-black/50 rounded-lg p-4 mb-6 border border-gold/20">
               <p className="text-sm text-gray-500 mb-1">Payment Link</p>
-              <p className="font-mono text-sm break-all">{newInvoice.paymentLink}</p>
+              <p className="font-mono text-sm break-all text-gray-300">{newInvoice.paymentLink}</p>
             </div>
 
             <div className="flex gap-4 justify-center">
@@ -169,13 +174,13 @@ export default function CreateInvoice() {
                   navigator.clipboard.writeText(newInvoice.paymentLink);
                   toast.success("Link copied!");
                 }}
-                className="bg-solana-purple text-white px-6 py-2 rounded-lg hover:bg-purple-600 transition"
+                className="bg-gradient-to-r from-gold to-gold-dark text-casino-black px-6 py-2 rounded-lg font-bold hover:from-gold-dark hover:to-gold transition"
               >
                 Copy Link
               </button>
               <Link
                 href="/"
-                className="border border-gray-300 px-6 py-2 rounded-lg hover:bg-gray-50 transition"
+                className="border border-gold/30 text-gray-300 px-6 py-2 rounded-lg hover:bg-gold/10 transition"
               >
                 Back to Dashboard
               </Link>
@@ -187,12 +192,12 @@ export default function CreateInvoice() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="gradient-bg">
+    <div className="min-h-screen bg-casino-black">
+      <header className="gradient-bg border-b border-gold/20">
         <div className="max-w-7xl mx-auto px-4 py-6">
           <div className="flex items-center justify-between">
-            <Link href="/" className="text-2xl font-bold text-white">
-              InvoiceNow
+            <Link href="/" className="text-2xl font-bold text-gold">
+              BadassInvoices
             </Link>
             <WalletMultiButton />
           </div>
@@ -200,13 +205,13 @@ export default function CreateInvoice() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-8">
-        <div className="bg-white rounded-xl p-8 shadow-sm">
-          <h1 className="text-2xl font-bold mb-6">Create Invoice</h1>
+        <div className="bg-casino-dark rounded-xl p-8 shadow-lg border border-gold/20">
+          <h1 className="text-2xl font-bold mb-6 text-gold">Create Invoice</h1>
 
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Client Email */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-gray-300 mb-1">
                 Client Email (optional)
               </label>
               <input
@@ -216,7 +221,7 @@ export default function CreateInvoice() {
                   setForm({ ...form, clientEmail: e.target.value })
                 }
                 placeholder="client@example.com"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-solana-purple focus:border-transparent"
+                className="w-full px-4 py-2 bg-casino-black border border-gold/30 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-gold focus:border-transparent"
               />
               <p className="text-xs text-gray-500 mt-1">
                 We'll send payment reminders to this email
@@ -226,7 +231,7 @@ export default function CreateInvoice() {
             {/* Amount & Token */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   Amount *
                 </label>
                 <div className="relative">
@@ -240,7 +245,7 @@ export default function CreateInvoice() {
                     value={form.amount}
                     onChange={(e) => setForm({ ...form, amount: e.target.value })}
                     placeholder="0.00"
-                    className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-solana-purple focus:border-transparent ${
+                    className={`w-full px-4 py-2 bg-casino-black border border-gold/30 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-gold focus:border-transparent ${
                       form.token.symbol ? "pl-6" : ""
                     }`}
                     required
@@ -248,7 +253,7 @@ export default function CreateInvoice() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
                   Currency
                 </label>
                 <select
@@ -259,7 +264,7 @@ export default function CreateInvoice() {
                       token: TOKENS.find((t) => t.mint === e.target.value)!,
                     })
                   }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-solana-purple focus:border-transparent"
+                  className="w-full px-4 py-2 bg-casino-black border border-gold/30 rounded-lg text-white focus:ring-2 focus:ring-gold focus:border-transparent"
                 >
                   {TOKENS.map((token) => (
                     <option key={token.mint} value={token.mint}>
@@ -272,7 +277,7 @@ export default function CreateInvoice() {
 
             {/* Due Date */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-gray-300 mb-1">
                 Due Date *
               </label>
               <input
@@ -280,14 +285,14 @@ export default function CreateInvoice() {
                 value={form.dueDate}
                 onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
                 min={new Date().toISOString().split("T")[0]}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-solana-purple focus:border-transparent"
+                className="w-full px-4 py-2 bg-casino-black border border-gold/30 rounded-lg text-white focus:ring-2 focus:ring-gold focus:border-transparent"
                 required
               />
             </div>
 
             {/* Memo */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-gray-300 mb-1">
                 Description
               </label>
               <textarea
@@ -295,20 +300,20 @@ export default function CreateInvoice() {
                 onChange={(e) => setForm({ ...form, memo: e.target.value })}
                 placeholder="Website development - Phase 1"
                 rows={3}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-solana-purple focus:border-transparent"
+                className="w-full px-4 py-2 bg-casino-black border border-gold/30 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-gold focus:border-transparent"
               />
             </div>
 
             {/* Milestones Toggle */}
-            <div className="border-t pt-6">
+            <div className="border-t border-gray-700 pt-6">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={showMilestones}
                   onChange={(e) => setShowMilestones(e.target.checked)}
-                  className="w-4 h-4 text-solana-purple"
+                  className="w-4 h-4 text-gold rounded border-gold/30 bg-casino-black focus:ring-gold"
                 />
-                <span className="font-medium">Split into milestones (escrow)</span>
+                <span className="font-medium text-gray-300">Split into milestones (escrow)</span>
               </label>
               <p className="text-xs text-gray-500 mt-1">
                 Client funds escrow upfront, you get paid as milestones complete
@@ -317,7 +322,7 @@ export default function CreateInvoice() {
 
             {/* Milestones */}
             {showMilestones && (
-              <div className="space-y-4 bg-gray-50 p-4 rounded-lg">
+              <div className="space-y-4 bg-casino-black/50 p-4 rounded-lg border border-gold/20">
                 {milestones.map((milestone, index) => (
                   <div key={index} className="flex gap-4 items-start">
                     <div className="flex-1">
@@ -328,7 +333,7 @@ export default function CreateInvoice() {
                           updateMilestone(index, "description", e.target.value)
                         }
                         placeholder="Milestone description"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        className="w-full px-3 py-2 bg-casino-black border border-gold/30 rounded-lg text-sm text-white placeholder-gray-500"
                       />
                     </div>
                     <div className="w-32">
@@ -344,13 +349,13 @@ export default function CreateInvoice() {
                           )
                         }
                         placeholder="Amount"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        className="w-full px-3 py-2 bg-casino-black border border-gold/30 rounded-lg text-sm text-white placeholder-gray-500"
                       />
                     </div>
                     <button
                       type="button"
                       onClick={() => removeMilestone(index)}
-                      className="text-red-500 hover:text-red-700 p-2"
+                      className="text-lucky-red hover:text-red-400 p-2"
                     >
                       x
                     </button>
@@ -359,7 +364,7 @@ export default function CreateInvoice() {
                 <button
                   type="button"
                   onClick={addMilestone}
-                  className="text-solana-purple hover:underline text-sm"
+                  className="text-gold hover:underline text-sm"
                 >
                   + Add Milestone
                 </button>
@@ -370,7 +375,7 @@ export default function CreateInvoice() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-solana-purple text-white py-3 rounded-lg font-medium hover:bg-purple-600 transition disabled:opacity-50"
+              className="w-full bg-gradient-to-r from-gold to-gold-dark text-casino-black py-3 rounded-lg font-bold hover:from-gold-dark hover:to-gold transition disabled:opacity-50"
             >
               {loading ? "Creating..." : "Create Invoice"}
             </button>

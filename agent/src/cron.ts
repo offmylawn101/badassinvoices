@@ -6,7 +6,7 @@ dotenv.config();
 
 const agent = new InvoiceAgent();
 
-console.log("InvoiceNow Agent Cron Service Started");
+console.log("BadassInvoices Agent Cron Service Started");
 console.log("=====================================");
 
 // Run every hour - check for invoices needing reminders

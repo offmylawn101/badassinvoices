@@ -1,19 +1,24 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
-// Configure email transport
-// In production, use proper SMTP service (SendGrid, AWS SES, etc.)
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp.gmail.com",
-  port: parseInt(process.env.SMTP_PORT || "587"),
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+let _resend: Resend;
+function getResend() {
+  if (!_resend) {
+    _resend = new Resend(process.env.RESEND_API_KEY);
+  }
+  return _resend;
+}
 
-const APP_URL = process.env.APP_URL || "http://localhost:3000";
-const FROM_EMAIL = process.env.FROM_EMAIL || "noreply@invoicenow.app";
+const APP_URL = process.env.APP_URL || "https://invoice.offmylawn.xyz";
+const FROM_EMAIL = process.env.FROM_EMAIL || "invoices@offmylawn.xyz";
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
 interface Invoice {
   id: string;
@@ -52,23 +57,24 @@ export async function sendReminderEmail(invoice: Invoice): Promise<void> {
       <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #9945FF, #14F195); padding: 30px; border-radius: 12px 12px 0 0; }
-        .header h1 { color: white; margin: 0; }
-        .content { background: #f8f9fa; padding: 30px; border-radius: 0 0 12px 12px; }
-        .invoice-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
-        .amount { font-size: 32px; font-weight: bold; color: #9945FF; }
-        .pay-button { display: inline-block; background: #9945FF; color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0; }
-        .overdue { color: #dc3545; font-weight: bold; }
+        .header { background: linear-gradient(135deg, #FFD700, #B8860B); padding: 30px; border-radius: 12px 12px 0 0; }
+        .header h1 { color: #0F0F0F; margin: 0; font-weight: 900; }
+        .content { background: #1A1A2E; padding: 30px; border-radius: 0 0 12px 12px; color: #e5e5e5; }
+        .invoice-details { background: #0F0F0F; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #FFD70033; }
+        .invoice-details p { color: #e5e5e5; }
+        .amount { font-size: 32px; font-weight: bold; color: #FFD700; }
+        .pay-button { display: inline-block; background: linear-gradient(135deg, #FFD700, #B8860B); color: #0F0F0F; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0; }
+        .overdue { color: #DC2626; font-weight: bold; }
         .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
       </style>
     </head>
-    <body>
+    <body style="background: #0F0F0F;">
       <div class="container">
         <div class="header">
-          <h1>InvoiceNow</h1>
+          <h1>BadassInvoices</h1>
         </div>
         <div class="content">
-          <h2>Payment Reminder ${reminderNumber > 1 ? `#${reminderNumber}` : ""}</h2>
+          <h2 style="color: white;">Payment Reminder ${reminderNumber > 1 ? `#${reminderNumber}` : ""}</h2>
 
           <p>${isOverdue ? '<span class="overdue">This invoice is overdue.</span>' : urgencyText}</p>
 
@@ -77,20 +83,24 @@ export async function sendReminderEmail(invoice: Invoice): Promise<void> {
             <p><strong>Amount Due:</strong></p>
             <p class="amount">${formattedAmount}</p>
             <p><strong>Due Date:</strong> ${dueDate}</p>
-            ${invoice.memo ? `<p><strong>Description:</strong> ${invoice.memo}</p>` : ""}
+            ${invoice.memo ? `<p><strong>Description:</strong> ${escapeHtml(invoice.memo)}</p>` : ""}
           </div>
 
           <center>
             <a href="${paymentUrl}" class="pay-button">Pay Now with Solana</a>
           </center>
 
-          <p style="font-size: 14px; color: #666;">
+          <p style="font-size: 14px; color: #999;">
             Click the button above to pay instantly with your Solana wallet.
             Payments are processed in seconds with near-zero fees.
           </p>
+
+          <p style="font-size: 14px; color: #FFD700;">
+            Pay a premium for a chance to get this invoice FREE!
+          </p>
         </div>
         <div class="footer">
-          <p>Powered by InvoiceNow - Instant invoicing on Solana</p>
+          <p>Powered by BadassInvoices - Instant invoicing on Solana</p>
           <p>This is an automated reminder. If you've already paid, please disregard this email.</p>
         </div>
       </div>
@@ -98,28 +108,16 @@ export async function sendReminderEmail(invoice: Invoice): Promise<void> {
     </html>
   `;
 
-  const text = `
-Payment Reminder for Invoice ${invoice.id}
-
-Amount Due: ${formattedAmount}
-Due Date: ${dueDate}
-${invoice.memo ? `Description: ${invoice.memo}` : ""}
-
-${urgencyText}
-
-Pay now: ${paymentUrl}
-
----
-Powered by InvoiceNow - Instant invoicing on Solana
-  `;
-
-  await transporter.sendMail({
-    from: `InvoiceNow <${FROM_EMAIL}>`,
+  const { error } = await getResend().emails.send({
+    from: `BadassInvoices <${FROM_EMAIL}>`,
     to: invoice.client_email,
     subject,
-    text,
     html,
   });
+
+  if (error) {
+    throw new Error(`Failed to send reminder email: ${error.message}`);
+  }
 
   console.log(`Reminder sent to ${invoice.client_email} for invoice ${invoice.id}`);
 }
@@ -141,23 +139,23 @@ export async function sendPaymentConfirmation(
       <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #14F195, #9945FF); padding: 30px; border-radius: 12px 12px 0 0; }
-        .header h1 { color: white; margin: 0; }
-        .content { background: #f8f9fa; padding: 30px; border-radius: 0 0 12px 12px; }
-        .success-icon { font-size: 48px; text-align: center; }
-        .amount { font-size: 32px; font-weight: bold; color: #14F195; text-align: center; }
-        .tx-link { color: #9945FF; word-break: break-all; }
+        .header { background: linear-gradient(135deg, #22C55E, #FFD700); padding: 30px; border-radius: 12px 12px 0 0; }
+        .header h1 { color: #0F0F0F; margin: 0; font-weight: 900; }
+        .content { background: #1A1A2E; padding: 30px; border-radius: 0 0 12px 12px; color: #e5e5e5; }
+        .success-icon { font-size: 48px; text-align: center; color: #22C55E; }
+        .amount { font-size: 32px; font-weight: bold; color: #22C55E; text-align: center; }
+        .tx-link { color: #FFD700; word-break: break-all; }
         .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
       </style>
     </head>
-    <body>
+    <body style="background: #0F0F0F;">
       <div class="container">
         <div class="header">
-          <h1>InvoiceNow</h1>
+          <h1>BadassInvoices</h1>
         </div>
         <div class="content">
           <p class="success-icon">&#10003;</p>
-          <h2 style="text-align: center;">Payment Received!</h2>
+          <h2 style="text-align: center; color: white;">Payment Received!</h2>
 
           <p class="amount">${formattedAmount}</p>
 
@@ -171,31 +169,23 @@ export async function sendPaymentConfirmation(
           </p>
         </div>
         <div class="footer">
-          <p>Thank you for using InvoiceNow</p>
+          <p>Thank you for using BadassInvoices</p>
         </div>
       </div>
     </body>
     </html>
   `;
 
-  const text = `
-Payment Received!
-
-Invoice ${invoice.id} has been paid.
-Amount: ${formattedAmount}
-
-Transaction: ${explorerUrl}
-
-Thank you for using InvoiceNow.
-  `;
-
-  await transporter.sendMail({
-    from: `InvoiceNow <${FROM_EMAIL}>`,
+  const { error } = await getResend().emails.send({
+    from: `BadassInvoices <${FROM_EMAIL}>`,
     to: invoice.client_email,
     subject: `Payment received for Invoice ${invoice.id}`,
-    text,
     html,
   });
+
+  if (error) {
+    throw new Error(`Failed to send confirmation email: ${error.message}`);
+  }
 
   console.log(`Payment confirmation sent for invoice ${invoice.id}`);
 }
@@ -215,53 +205,66 @@ export async function sendInvoiceNotification(invoice: Invoice): Promise<void> {
       <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #9945FF, #14F195); padding: 30px; border-radius: 12px 12px 0 0; }
-        .header h1 { color: white; margin: 0; }
-        .content { background: #f8f9fa; padding: 30px; border-radius: 0 0 12px 12px; }
-        .invoice-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
-        .amount { font-size: 32px; font-weight: bold; color: #9945FF; }
-        .pay-button { display: inline-block; background: #9945FF; color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0; }
+        .header { background: linear-gradient(135deg, #FFD700, #B8860B); padding: 30px; border-radius: 12px 12px 0 0; }
+        .header h1 { color: #0F0F0F; margin: 0; font-weight: 900; }
+        .content { background: #1A1A2E; padding: 30px; border-radius: 0 0 12px 12px; color: #e5e5e5; }
+        .invoice-details { background: #0F0F0F; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #FFD70033; }
+        .invoice-details p { color: #e5e5e5; }
+        .amount { font-size: 32px; font-weight: bold; color: #FFD700; }
+        .pay-button { display: inline-block; background: linear-gradient(135deg, #FFD700, #B8860B); color: #0F0F0F; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0; }
+        .spin-banner { background: linear-gradient(135deg, #DC2626, #FFD700); padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .spin-banner p { color: white; font-weight: bold; font-size: 16px; margin: 0; }
         .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
       </style>
     </head>
-    <body>
+    <body style="background: #0F0F0F;">
       <div class="container">
         <div class="header">
-          <h1>InvoiceNow</h1>
+          <h1>BadassInvoices</h1>
         </div>
         <div class="content">
-          <h2>You've received an invoice</h2>
+          <h2 style="color: white;">You've received an invoice</h2>
 
           <div class="invoice-details">
             <p><strong>Invoice:</strong> ${invoice.id}</p>
             <p><strong>Amount Due:</strong></p>
             <p class="amount">${formattedAmount}</p>
             <p><strong>Due Date:</strong> ${dueDate}</p>
-            ${invoice.memo ? `<p><strong>Description:</strong> ${invoice.memo}</p>` : ""}
+            ${invoice.memo ? `<p><strong>Description:</strong> ${escapeHtml(invoice.memo)}</p>` : ""}
+          </div>
+
+          <div class="spin-banner">
+            <p>SPIN TO WIN - Pay a premium for a chance to get this invoice FREE!</p>
           </div>
 
           <center>
             <a href="${paymentUrl}" class="pay-button">Pay Now with Solana</a>
           </center>
 
-          <p style="font-size: 14px; color: #666;">
+          <p style="font-size: 14px; color: #999;">
             Pay instantly with your Solana wallet. Near-zero fees, instant settlement.
           </p>
         </div>
         <div class="footer">
-          <p>Powered by InvoiceNow</p>
+          <p>Powered by BadassInvoices</p>
         </div>
       </div>
     </body>
     </html>
   `;
 
-  await transporter.sendMail({
-    from: `InvoiceNow <${FROM_EMAIL}>`,
+  const { error } = await getResend().emails.send({
+    from: `BadassInvoices <${FROM_EMAIL}>`,
     to: invoice.client_email,
     subject: `Invoice ${invoice.id} - ${formattedAmount} due`,
     html,
   });
+
+  if (error) {
+    throw new Error(`Failed to send invoice notification: ${error.message}`);
+  }
+
+  console.log(`Invoice notification sent to ${invoice.client_email} for invoice ${invoice.id}`);
 }
 
 /**

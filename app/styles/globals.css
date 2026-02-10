@@ -3,30 +3,108 @@
 @tailwind utilities;
 
 :root {
-  --solana-purple: #9945FF;
-  --solana-green: #14F195;
+  --gold: #FFD700;
+  --gold-dark: #B8860B;
+  --lucky-red: #DC2626;
+  --lucky-green: #22C55E;
+  --casino-black: #0F0F0F;
+  --casino-dark: #1A1A2E;
 }
 
 body {
-  @apply bg-gray-50 text-gray-900;
+  @apply bg-casino-black text-white;
 }
 
 .gradient-bg {
-  background: linear-gradient(135deg, var(--solana-purple), var(--solana-green));
+  background: linear-gradient(135deg, var(--casino-dark), var(--casino-black));
+}
+
+.gradient-gold {
+  background: linear-gradient(135deg, var(--gold), var(--gold-dark));
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, var(--solana-purple), var(--solana-green));
+  background: linear-gradient(135deg, var(--gold), var(--gold-dark));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
+.glow-gold {
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+}
+
+.glow-green {
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.5);
+}
+
+.glow-red {
+  box-shadow: 0 0 20px rgba(220, 38, 38, 0.5);
+}
+
+/* Casino card styling */
+.casino-card {
+  @apply bg-casino-dark rounded-xl border border-gold/20;
+}
+
+/* Gold button styling */
+.btn-gold {
+  @apply bg-gradient-to-r from-gold to-gold-dark text-casino-black font-bold;
+  @apply hover:from-gold-dark hover:to-gold transition-all;
+  @apply shadow-lg hover:shadow-gold/50;
+}
+
+/* Spin button styling */
+.btn-spin {
+  @apply bg-gradient-to-r from-lucky-red to-gold text-white font-bold;
+  @apply hover:from-gold hover:to-lucky-red transition-all;
+  @apply animate-pulse-glow;
+}
+
 /* Wallet adapter styles override */
 .wallet-adapter-button {
-  @apply bg-solana-purple hover:bg-purple-600 !important;
+  @apply bg-gradient-to-r from-gold to-gold-dark text-casino-black font-bold !important;
+}
+
+.wallet-adapter-button:hover {
+  @apply from-gold-dark to-gold !important;
 }
 
 .wallet-adapter-modal-wrapper {
-  @apply bg-white !important;
+  @apply bg-casino-dark !important;
+}
+
+/* Premium chip styling */
+.chip {
+  @apply border-2 border-gold rounded-lg px-4 py-2;
+  @apply hover:bg-gold/10 transition-all cursor-pointer;
+}
+
+.chip-selected {
+  @apply bg-gold text-casino-black border-gold;
+}
+
+/* Win/Loss result animations */
+@keyframes confetti {
+  0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+}
+
+@keyframes jackpot-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+.jackpot-text {
+  animation: jackpot-pulse 0.5s ease-in-out infinite;
+}
+
+/* Wheel light chase animation */
+@keyframes wheel-light {
+  0%, 100% { opacity: 0.3; box-shadow: 0 0 4px #FFD700; }
+  50% { opacity: 1; box-shadow: 0 0 15px #FFD700, 0 0 30px #FFD700; }
+}
+
+.wheel-light {
+  animation: wheel-light 0.3s ease-in-out infinite;
 }

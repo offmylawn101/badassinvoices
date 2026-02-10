@@ -52,8 +52,8 @@ router.get("/:id/transaction", async (req: Request, res: Response) => {
 
     // Return transaction request format for Solana Pay
     res.json({
-      label: "InvoiceNow",
-      icon: "https://invoicenow.app/icon.png",
+      label: "BadassInvoices",
+      icon: "https://invoice.offmylawn.xyz/logo.png",
     });
   } catch (error) {
     console.error("Error fetching transaction:", error);

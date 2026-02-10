@@ -1,12 +1,24 @@
 import { Router, Request, Response } from "express";
 import { invoiceQueries } from "../db.js";
 import { sendPaymentConfirmation } from "../services/email.js";
+import { verifyPayment } from "../services/solana-pay.js";
 
 const router = Router();
+
+const WEBHOOK_AUTH_TOKEN = process.env.HELIUS_WEBHOOK_AUTH || "";
 
 // Helius webhook for tracking on-chain payments
 router.post("/helius", async (req: Request, res: Response) => {
   try {
+    // Verify webhook auth token if configured
+    if (WEBHOOK_AUTH_TOKEN) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || authHeader !== `Bearer ${WEBHOOK_AUTH_TOKEN}`) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+    }
+
     const webhookData = req.body;
 
     // Helius sends array of transactions
@@ -83,21 +95,55 @@ async function checkPayment(toWallet: string, amount: number, signature: string,
 // Manual payment verification endpoint
 router.post("/verify-payment", async (req: Request, res: Response) => {
   try {
-    const { invoiceId, txSignature } = req.body;
+    const { invoiceId, txSignature, expectedAmount } = req.body;
 
     if (!invoiceId || !txSignature) {
       res.status(400).json({ error: "Invoice ID and transaction signature required" });
       return;
     }
 
-    const invoice = invoiceQueries.getById.get(invoiceId);
+    const invoice = invoiceQueries.getById.get(invoiceId) as any;
     if (!invoice) {
       res.status(404).json({ error: "Invoice not found" });
       return;
     }
 
-    // TODO: Verify transaction on-chain using Solana RPC
-    // For now, trust the signature and mark as paid
+    // Check if already paid (idempotency)
+    if (invoice.status === "paid") {
+      res.json({ success: true, message: "Invoice already paid" });
+      return;
+    }
+
+    // Check if this signature was already used
+    if (invoice.tx_signature === txSignature) {
+      res.json({ success: true, message: "Payment already verified" });
+      return;
+    }
+
+    // When lottery is active, frontend sends expectedAmount (just the invoice portion going to creator).
+    // Use it if provided, otherwise fall back to invoice.amount.
+    const verifyAmount = (typeof expectedAmount === "number" && expectedAmount > 0)
+      ? expectedAmount
+      : invoice.amount;
+
+    // Verify transaction on-chain
+    const verification = await verifyPayment(
+      txSignature,
+      invoice.creator_wallet,
+      verifyAmount,
+      invoice.token_mint
+    );
+
+    if (!verification.verified) {
+      console.error(`Payment verification failed for invoice ${invoiceId}: ${verification.error}`);
+      res.status(400).json({
+        error: "Payment verification failed",
+        details: verification.error
+      });
+      return;
+    }
+
+    // Mark invoice as paid
     invoiceQueries.updateStatus.run(
       "paid",
       Math.floor(Date.now() / 1000),
@@ -105,7 +151,14 @@ router.post("/verify-payment", async (req: Request, res: Response) => {
       invoiceId
     );
 
-    res.json({ success: true, message: "Payment verified" });
+    console.log(`Invoice ${invoiceId} verified and marked as paid. TX: ${txSignature}, Amount: ${verification.actualAmount}`);
+
+    // Send confirmation email if client email exists
+    if (invoice.client_email) {
+      await sendPaymentConfirmation(invoice, txSignature);
+    }
+
+    res.json({ success: true, message: "Payment verified", amount: verification.actualAmount });
   } catch (error) {
     console.error("Verification error:", error);
     res.status(500).json({ error: "Payment verification failed" });

@@ -1,7 +1,13 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
 declare_id!("GyR2tNwj8UF4AUpiUjzXKqW9mdHcgQzuByqnyhGk6s3N");
+
+// Constants for lottery
+const MAX_HOUSE_EDGE_BPS: u16 = 1000; // 10% max house edge
+const MAX_WIN_PCT_BPS: u16 = 1000; // 10% max single win as % of pool
+const MIN_POOL_RESERVE_BPS: u16 = 2000; // 20% min reserve
+const BPS_DIVISOR: u64 = 10000;
 
 #[program]
 pub mod invoicenow {
@@ -224,6 +230,282 @@ pub mod invoicenow {
 
         Ok(())
     }
+
+    // ============== LOTTERY INSTRUCTIONS ==============
+
+    /// Initialize a lottery pool for a specific token
+    pub fn initialize_lottery_pool(
+        ctx: Context<InitializeLotteryPool>,
+        house_edge_bps: u16,
+        min_pool_reserve_bps: u16,
+        max_win_pct_bps: u16,
+    ) -> Result<()> {
+        require!(house_edge_bps <= MAX_HOUSE_EDGE_BPS, InvoiceError::HouseEdgeTooHigh);
+        require!(min_pool_reserve_bps <= 5000, InvoiceError::ReserveTooHigh);
+        require!(max_win_pct_bps <= MAX_WIN_PCT_BPS, InvoiceError::MaxWinTooHigh);
+
+        let pool = &mut ctx.accounts.lottery_pool;
+        pool.authority = ctx.accounts.authority.key();
+        pool.token_mint = ctx.accounts.token_mint.key();
+        pool.total_balance = 0;
+        pool.total_premiums_collected = 0;
+        pool.total_payouts = 0;
+        pool.total_entries = 0;
+        pool.total_wins = 0;
+        pool.house_edge_bps = house_edge_bps;
+        pool.min_pool_reserve_bps = min_pool_reserve_bps;
+        pool.max_win_pct_bps = max_win_pct_bps;
+        pool.paused = false;
+        pool.bump = ctx.bumps.lottery_pool;
+
+        emit!(LotteryPoolCreated {
+            pool: pool.key(),
+            token_mint: pool.token_mint,
+            house_edge_bps,
+        });
+
+        Ok(())
+    }
+
+    /// Seed the lottery pool with initial funds
+    pub fn seed_lottery_pool(ctx: Context<SeedLotteryPool>, amount: u64) -> Result<()> {
+        let pool = &mut ctx.accounts.lottery_pool;
+
+        require!(!pool.paused, InvoiceError::PoolPaused);
+        require!(amount > 0, InvoiceError::InvalidAmount);
+
+        // Transfer tokens from seeder to pool vault
+        let transfer_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            Transfer {
+                from: ctx.accounts.seeder_token_account.to_account_info(),
+                to: ctx.accounts.pool_vault.to_account_info(),
+                authority: ctx.accounts.seeder.to_account_info(),
+            },
+        );
+        token::transfer(transfer_ctx, amount)?;
+
+        pool.total_balance = pool.total_balance.checked_add(amount).unwrap();
+
+        emit!(LotteryPoolSeeded {
+            pool: pool.key(),
+            amount,
+            new_balance: pool.total_balance,
+        });
+
+        Ok(())
+    }
+
+    /// Pay invoice with lottery option (premium for chance to win)
+    pub fn pay_with_lottery(
+        ctx: Context<PayWithLottery>,
+        premium_amount: u64,
+    ) -> Result<()> {
+        let pool = &mut ctx.accounts.lottery_pool;
+        let invoice = &ctx.accounts.invoice;
+        let entry = &mut ctx.accounts.lottery_entry;
+        let clock = Clock::get()?;
+
+        // Validations
+        require!(!pool.paused, InvoiceError::PoolPaused);
+        require!(invoice.status == InvoiceStatus::Pending, InvoiceError::InvalidInvoiceStatus);
+        require!(premium_amount > 0, InvoiceError::InvalidAmount);
+
+        // Invoice must be at least 5 minutes old (prevent gaming)
+        require!(
+            clock.unix_timestamp - invoice.created_at >= 300,
+            InvoiceError::InvoiceTooNew
+        );
+
+        let invoice_amount = invoice.amount;
+
+        // Calculate max win based on pool balance
+        let available_pool = pool.total_balance
+            .saturating_mul(BPS_DIVISOR - pool.min_pool_reserve_bps as u64)
+            / BPS_DIVISOR;
+        let max_win = available_pool
+            .saturating_mul(pool.max_win_pct_bps as u64)
+            / BPS_DIVISOR;
+
+        require!(invoice_amount <= max_win, InvoiceError::InvoiceExceedsMaxWin);
+
+        // Calculate win probability
+        // Formula: win_prob = premium / (invoice_amount * (1 + house_edge))
+        let house_edge_multiplier = BPS_DIVISOR + pool.house_edge_bps as u64;
+        let effective_invoice = invoice_amount
+            .checked_mul(house_edge_multiplier)
+            .unwrap()
+            / BPS_DIVISOR;
+
+        let win_probability_bps = (premium_amount as u128)
+            .checked_mul(BPS_DIVISOR as u128)
+            .unwrap()
+            .checked_div(effective_invoice as u128)
+            .unwrap_or(0) as u16;
+
+        // Cap probability at 95%
+        let win_probability_bps = win_probability_bps.min(9500);
+
+        // Transfer total payment (invoice + premium) from client to pool vault
+        let total_payment = invoice_amount.checked_add(premium_amount).unwrap();
+        let transfer_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            Transfer {
+                from: ctx.accounts.client_token_account.to_account_info(),
+                to: ctx.accounts.pool_vault.to_account_info(),
+                authority: ctx.accounts.client.to_account_info(),
+            },
+        );
+        token::transfer(transfer_ctx, total_payment)?;
+
+        // Update pool balance (add premium only, invoice amount held for settlement)
+        pool.total_balance = pool.total_balance.checked_add(premium_amount).unwrap();
+        pool.total_premiums_collected = pool.total_premiums_collected.checked_add(premium_amount).unwrap();
+        pool.total_entries = pool.total_entries.checked_add(1).unwrap();
+
+        // Create lottery entry
+        entry.invoice = invoice.key();
+        entry.client = ctx.accounts.client.key();
+        entry.invoice_amount = invoice_amount;
+        entry.premium_paid = premium_amount;
+        entry.win_probability_bps = win_probability_bps;
+        entry.status = LotteryStatus::PendingVrf;
+        entry.random_result = None;
+        entry.created_at = clock.unix_timestamp;
+        entry.resolved_at = 0;
+        entry.bump = ctx.bumps.lottery_entry;
+
+        emit!(LotteryEntryCreated {
+            entry: entry.key(),
+            invoice: invoice.key(),
+            client: ctx.accounts.client.key(),
+            invoice_amount,
+            premium_paid: premium_amount,
+            win_probability_bps,
+        });
+
+        Ok(())
+    }
+
+    /// Settle lottery result (called with randomness - simplified without VRF for hackathon)
+    pub fn settle_lottery(
+        ctx: Context<SettleLottery>,
+        random_bytes: [u8; 32],
+    ) -> Result<()> {
+        let pool = &mut ctx.accounts.lottery_pool;
+        let invoice = &mut ctx.accounts.invoice;
+        let entry = &mut ctx.accounts.lottery_entry;
+        let clock = Clock::get()?;
+
+        require!(entry.status == LotteryStatus::PendingVrf, InvoiceError::LotteryAlreadySettled);
+
+        // Derive randomness (0-9999)
+        let random_value = u16::from_le_bytes([random_bytes[0], random_bytes[1]]) % 10000;
+
+        // Determine win/loss
+        let won = random_value < entry.win_probability_bps;
+
+        entry.random_result = Some(random_bytes);
+        entry.resolved_at = clock.unix_timestamp;
+
+        let token_mint = pool.token_mint;
+        let pool_bump = pool.bump;
+
+        if won {
+            // WIN: Refund invoice amount from pool to client
+            entry.status = LotteryStatus::Won;
+            pool.total_wins = pool.total_wins.checked_add(1).unwrap();
+            pool.total_payouts = pool.total_payouts.checked_add(entry.invoice_amount).unwrap();
+
+            // Transfer invoice amount back to client (they won!)
+            let seeds = &[
+                b"lottery_pool",
+                token_mint.as_ref(),
+                &[pool_bump],
+            ];
+            let signer_seeds = &[&seeds[..]];
+
+            let transfer_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.pool_vault.to_account_info(),
+                    to: ctx.accounts.client_token_account.to_account_info(),
+                    authority: pool.to_account_info(),
+                },
+                signer_seeds,
+            );
+            token::transfer(transfer_ctx, entry.invoice_amount)?;
+
+            // Transfer invoice amount to creator (paid by pool)
+            let transfer_to_creator = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.pool_vault.to_account_info(),
+                    to: ctx.accounts.creator_token_account.to_account_info(),
+                    authority: pool.to_account_info(),
+                },
+                signer_seeds,
+            );
+            token::transfer(transfer_to_creator, entry.invoice_amount)?;
+
+            // Deduct payout from pool
+            pool.total_balance = pool.total_balance.saturating_sub(entry.invoice_amount);
+
+            emit!(LotteryWon {
+                entry: entry.key(),
+                invoice: invoice.key(),
+                client: entry.client,
+                amount_won: entry.invoice_amount,
+            });
+        } else {
+            // LOSE: Pay invoice amount to creator
+            entry.status = LotteryStatus::Lost;
+
+            let seeds = &[
+                b"lottery_pool",
+                token_mint.as_ref(),
+                &[pool_bump],
+            ];
+            let signer_seeds = &[&seeds[..]];
+
+            let transfer_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.pool_vault.to_account_info(),
+                    to: ctx.accounts.creator_token_account.to_account_info(),
+                    authority: pool.to_account_info(),
+                },
+                signer_seeds,
+            );
+            token::transfer(transfer_ctx, entry.invoice_amount)?;
+
+            emit!(LotteryLost {
+                entry: entry.key(),
+                invoice: invoice.key(),
+                client: entry.client,
+            });
+        }
+
+        // Mark invoice as paid
+        invoice.status = InvoiceStatus::Paid;
+        invoice.paid_at = clock.unix_timestamp;
+        invoice.client = entry.client;
+
+        Ok(())
+    }
+
+    /// Pause/unpause lottery pool (admin only)
+    pub fn toggle_lottery_pool(ctx: Context<ToggleLotteryPool>) -> Result<()> {
+        let pool = &mut ctx.accounts.lottery_pool;
+        pool.paused = !pool.paused;
+
+        emit!(LotteryPoolToggled {
+            pool: pool.key(),
+            paused: pool.paused,
+        });
+
+        Ok(())
+    }
 }
 
 // === ACCOUNTS ===
@@ -365,6 +647,176 @@ pub struct CreateProfile<'info> {
     pub system_program: Program<'info, System>,
 }
 
+// ============== LOTTERY ACCOUNT STRUCTS ==============
+
+#[derive(Accounts)]
+pub struct InitializeLotteryPool<'info> {
+    #[account(
+        init,
+        payer = authority,
+        space = LotteryPool::SPACE,
+        seeds = [b"lottery_pool", token_mint.key().as_ref()],
+        bump
+    )]
+    pub lottery_pool: Account<'info, LotteryPool>,
+
+    #[account(
+        init,
+        payer = authority,
+        token::mint = token_mint,
+        token::authority = lottery_pool,
+        seeds = [b"lottery_vault", token_mint.key().as_ref()],
+        bump
+    )]
+    pub pool_vault: Account<'info, TokenAccount>,
+
+    pub token_mint: Account<'info, Mint>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SeedLotteryPool<'info> {
+    #[account(
+        mut,
+        seeds = [b"lottery_pool", lottery_pool.token_mint.as_ref()],
+        bump = lottery_pool.bump
+    )]
+    pub lottery_pool: Account<'info, LotteryPool>,
+
+    #[account(
+        mut,
+        seeds = [b"lottery_vault", lottery_pool.token_mint.as_ref()],
+        bump
+    )]
+    pub pool_vault: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = seeder_token_account.owner == seeder.key(),
+        constraint = seeder_token_account.mint == lottery_pool.token_mint
+    )]
+    pub seeder_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub seeder: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct PayWithLottery<'info> {
+    #[account(
+        mut,
+        seeds = [b"lottery_pool", lottery_pool.token_mint.as_ref()],
+        bump = lottery_pool.bump
+    )]
+    pub lottery_pool: Account<'info, LotteryPool>,
+
+    #[account(
+        mut,
+        seeds = [b"lottery_vault", lottery_pool.token_mint.as_ref()],
+        bump
+    )]
+    pub pool_vault: Account<'info, TokenAccount>,
+
+    #[account(
+        seeds = [b"invoice", invoice.creator.as_ref(), invoice.invoice_id.as_bytes()],
+        bump = invoice.bump,
+        constraint = invoice.token_mint == lottery_pool.token_mint
+    )]
+    pub invoice: Account<'info, Invoice>,
+
+    #[account(
+        init,
+        payer = client,
+        space = LotteryEntry::SPACE,
+        seeds = [b"lottery_entry", invoice.key().as_ref(), client.key().as_ref()],
+        bump
+    )]
+    pub lottery_entry: Account<'info, LotteryEntry>,
+
+    #[account(
+        mut,
+        constraint = client_token_account.owner == client.key(),
+        constraint = client_token_account.mint == lottery_pool.token_mint
+    )]
+    pub client_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub client: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SettleLottery<'info> {
+    #[account(
+        mut,
+        seeds = [b"lottery_pool", lottery_pool.token_mint.as_ref()],
+        bump = lottery_pool.bump
+    )]
+    pub lottery_pool: Account<'info, LotteryPool>,
+
+    #[account(
+        mut,
+        seeds = [b"lottery_vault", lottery_pool.token_mint.as_ref()],
+        bump
+    )]
+    pub pool_vault: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        seeds = [b"invoice", invoice.creator.as_ref(), invoice.invoice_id.as_bytes()],
+        bump = invoice.bump
+    )]
+    pub invoice: Account<'info, Invoice>,
+
+    #[account(
+        mut,
+        seeds = [b"lottery_entry", invoice.key().as_ref(), lottery_entry.client.as_ref()],
+        bump = lottery_entry.bump
+    )]
+    pub lottery_entry: Account<'info, LotteryEntry>,
+
+    #[account(
+        mut,
+        constraint = client_token_account.owner == lottery_entry.client,
+        constraint = client_token_account.mint == lottery_pool.token_mint
+    )]
+    pub client_token_account: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = creator_token_account.owner == invoice.creator,
+        constraint = creator_token_account.mint == lottery_pool.token_mint
+    )]
+    pub creator_token_account: Account<'info, TokenAccount>,
+
+    /// Anyone can settle (typically backend/crank)
+    pub settler: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct ToggleLotteryPool<'info> {
+    #[account(
+        mut,
+        seeds = [b"lottery_pool", lottery_pool.token_mint.as_ref()],
+        bump = lottery_pool.bump,
+        constraint = lottery_pool.authority == authority.key()
+    )]
+    pub lottery_pool: Account<'info, LotteryPool>,
+
+    pub authority: Signer<'info>,
+}
+
 // === STATE ===
 
 #[account]
@@ -428,6 +880,81 @@ pub struct UserProfile {
 
 impl UserProfile {
     pub const SPACE: usize = 8 + 32 + (4 + 64) + (4 + 128) + (4 + 128) + 8 + 8 + 1;
+}
+
+// ============== LOTTERY STATE ==============
+
+#[account]
+pub struct LotteryPool {
+    pub authority: Pubkey,
+    pub token_mint: Pubkey,
+    pub total_balance: u64,
+    pub total_premiums_collected: u64,
+    pub total_payouts: u64,
+    pub total_entries: u64,
+    pub total_wins: u64,
+    pub house_edge_bps: u16,
+    pub min_pool_reserve_bps: u16,
+    pub max_win_pct_bps: u16,
+    pub paused: bool,
+    pub bump: u8,
+}
+
+impl LotteryPool {
+    pub const SPACE: usize = 8 + // discriminator
+        32 + // authority
+        32 + // token_mint
+        8 + // total_balance
+        8 + // total_premiums_collected
+        8 + // total_payouts
+        8 + // total_entries
+        8 + // total_wins
+        2 + // house_edge_bps
+        2 + // min_pool_reserve_bps
+        2 + // max_win_pct_bps
+        1 + // paused
+        1; // bump
+}
+
+#[account]
+pub struct LotteryEntry {
+    pub invoice: Pubkey,
+    pub client: Pubkey,
+    pub invoice_amount: u64,
+    pub premium_paid: u64,
+    pub win_probability_bps: u16,
+    pub status: LotteryStatus,
+    pub random_result: Option<[u8; 32]>,
+    pub created_at: i64,
+    pub resolved_at: i64,
+    pub bump: u8,
+}
+
+impl LotteryEntry {
+    pub const SPACE: usize = 8 + // discriminator
+        32 + // invoice
+        32 + // client
+        8 + // invoice_amount
+        8 + // premium_paid
+        2 + // win_probability_bps
+        1 + // status
+        1 + 32 + // Option<[u8; 32]>
+        8 + // created_at
+        8 + // resolved_at
+        1; // bump
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub enum LotteryStatus {
+    PendingVrf,
+    Won,
+    Lost,
+}
+
+impl Default for LotteryStatus {
+    fn default() -> Self {
+        LotteryStatus::PendingVrf
+    }
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Default)]
@@ -495,6 +1022,53 @@ pub struct InvoiceCancelled {
     pub invoice_key: Pubkey,
 }
 
+// ============== LOTTERY EVENTS ==============
+
+#[event]
+pub struct LotteryPoolCreated {
+    pub pool: Pubkey,
+    pub token_mint: Pubkey,
+    pub house_edge_bps: u16,
+}
+
+#[event]
+pub struct LotteryPoolSeeded {
+    pub pool: Pubkey,
+    pub amount: u64,
+    pub new_balance: u64,
+}
+
+#[event]
+pub struct LotteryEntryCreated {
+    pub entry: Pubkey,
+    pub invoice: Pubkey,
+    pub client: Pubkey,
+    pub invoice_amount: u64,
+    pub premium_paid: u64,
+    pub win_probability_bps: u16,
+}
+
+#[event]
+pub struct LotteryWon {
+    pub entry: Pubkey,
+    pub invoice: Pubkey,
+    pub client: Pubkey,
+    pub amount_won: u64,
+}
+
+#[event]
+pub struct LotteryLost {
+    pub entry: Pubkey,
+    pub invoice: Pubkey,
+    pub client: Pubkey,
+}
+
+#[event]
+pub struct LotteryPoolToggled {
+    pub pool: Pubkey,
+    pub paused: bool,
+}
+
 // === ERRORS ===
 
 #[error_code]
@@ -523,4 +1097,22 @@ pub enum InvoiceError {
     NameTooLong,
     #[msg("Email too long (max 128 chars)")]
     EmailTooLong,
+
+    // Lottery errors
+    #[msg("House edge too high (max 10%)")]
+    HouseEdgeTooHigh,
+    #[msg("Reserve percentage too high")]
+    ReserveTooHigh,
+    #[msg("Max win percentage too high")]
+    MaxWinTooHigh,
+    #[msg("Lottery pool is paused")]
+    PoolPaused,
+    #[msg("Invalid amount")]
+    InvalidAmount,
+    #[msg("Invoice is too new for lottery (wait 5 minutes)")]
+    InvoiceTooNew,
+    #[msg("Invoice amount exceeds max win from pool")]
+    InvoiceExceedsMaxWin,
+    #[msg("Lottery entry already settled")]
+    LotteryAlreadySettled,
 }

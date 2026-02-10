@@ -133,7 +133,7 @@ export class InvoiceAgent {
     let response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 4096,
-      system: `You are an AI agent managing invoices for InvoiceNow, a Solana-based invoicing platform.
+      system: `You are an AI agent managing invoices for BadassInvoices, a Solana-based invoicing platform.
 
 Your responsibilities:
 1. Monitor pending invoices and identify those needing attention
@@ -192,7 +192,7 @@ Be helpful and proactive. Take actions that will help creators get paid faster.`
       response = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514",
         max_tokens: 4096,
-        system: `You are an AI agent managing invoices for InvoiceNow.`,
+        system: `You are an AI agent managing invoices for BadassInvoices.`,
         messages,
         tools: this.tools,
       });

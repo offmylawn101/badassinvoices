@@ -1,4 +1,5 @@
-const API_URL = process.env.API_URL || "http://localhost:3001";
+// Use local proxy to avoid ad blocker issues with cross-origin requests
+const API_URL = "";
 
 export interface Invoice {
   id: string;
@@ -45,7 +46,7 @@ export interface Client {
 
 // Invoice API
 export async function createInvoice(params: CreateInvoiceParams): Promise<Invoice> {
-  const res = await fetch(`${API_URL}/api/invoices`, {
+  const res = await fetch(`/api/v1/inv`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -60,7 +61,7 @@ export async function createInvoice(params: CreateInvoiceParams): Promise<Invoic
 }
 
 export async function getInvoices(wallet: string): Promise<Invoice[]> {
-  const res = await fetch(`${API_URL}/api/invoices?wallet=${wallet}`);
+  const res = await fetch(`/api/v1/inv?wallet=${wallet}`);
 
   if (!res.ok) {
     throw new Error("Failed to fetch invoices");
@@ -70,7 +71,7 @@ export async function getInvoices(wallet: string): Promise<Invoice[]> {
 }
 
 export async function getInvoice(id: string): Promise<Invoice> {
-  const res = await fetch(`${API_URL}/api/invoices/${id}`);
+  const res = await fetch(`/api/v1/inv/${id}`);
 
   if (!res.ok) {
     throw new Error("Invoice not found");
@@ -80,7 +81,7 @@ export async function getInvoice(id: string): Promise<Invoice> {
 }
 
 export async function sendReminder(id: string): Promise<void> {
-  const res = await fetch(`${API_URL}/api/invoices/${id}/remind`, {
+  const res = await fetch(`/api/v1/inv/${id}/remind`, {
     method: "POST",
   });
 
@@ -91,7 +92,7 @@ export async function sendReminder(id: string): Promise<void> {
 }
 
 export async function getQRCode(id: string): Promise<string> {
-  const res = await fetch(`${API_URL}/api/invoices/${id}/qr`);
+  const res = await fetch(`/api/v1/inv/${id}/qr`);
 
   if (!res.ok) {
     throw new Error("Failed to generate QR code");
@@ -103,7 +104,7 @@ export async function getQRCode(id: string): Promise<string> {
 
 // Payment page API
 export async function getPaymentData(id: string) {
-  const res = await fetch(`${API_URL}/pay/${id}`);
+  const res = await fetch(`/api/pay/${id}`);
 
   if (!res.ok) {
     throw new Error("Invoice not found");
@@ -114,7 +115,7 @@ export async function getPaymentData(id: string) {
 
 // Client API
 export async function getClients(wallet: string): Promise<Client[]> {
-  const res = await fetch(`${API_URL}/api/invoices/clients?wallet=${wallet}`);
+  const res = await fetch(`/api/v1/inv/clients?wallet=${wallet}`);
 
   if (!res.ok) {
     throw new Error("Failed to fetch clients");
@@ -129,7 +130,7 @@ export async function createClient(params: {
   email?: string;
   wallet?: string;
 }): Promise<Client> {
-  const res = await fetch(`${API_URL}/api/invoices/clients`, {
+  const res = await fetch(`/api/v1/inv/clients`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -171,4 +172,139 @@ export function getTokenSymbol(tokenMint: string): string {
   if (tokenMint === SOL_MINT) return "SOL";
   if (USDC_MINTS.includes(tokenMint)) return "USDC";
   return "Token";
+}
+
+// Lottery API
+export interface LotteryPool {
+  exists: boolean;
+  tokenMint: string;
+  totalBalance: number;
+  totalPremiumsCollected: number;
+  totalPayouts: number;
+  totalEntries: number;
+  totalWins: number;
+  houseEdgeBps: number;
+  lotteryAvailable: boolean;
+  maxWin: number;
+  threshold: number;
+  progress: number;
+  message?: string;
+}
+
+export interface LotteryOdds {
+  invoiceAmount: number;
+  premiumAmount: number;
+  totalPayment: number;
+  winProbabilityBps: number;
+  winProbabilityPct: string;
+  houseEdgeBps: number;
+}
+
+export interface LotteryEntry {
+  id: string;
+  invoiceId: string;
+  clientWallet: string;
+  invoiceAmount: number;
+  premiumPaid: number;
+  totalPaid: number;
+  winProbabilityBps: number;
+  winProbabilityPct: string;
+  status: "pending_vrf" | "won" | "lost";
+}
+
+export interface LotteryResult {
+  entryId: string;
+  won: boolean;
+  randomValue: number;
+  threshold: number;
+  invoiceAmount: number;
+  premiumPaid: number;
+  status: "won" | "lost";
+  message: string;
+}
+
+export async function getLotteryPool(tokenMint: string): Promise<LotteryPool> {
+  const res = await fetch(`/api/v1/spin/pool/${tokenMint}`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch lottery pool");
+  }
+  return res.json();
+}
+
+export async function calculateLotteryOdds(
+  invoiceAmount: number,
+  premiumAmount: number,
+  tokenMint: string
+): Promise<LotteryOdds> {
+  const res = await fetch(`/api/v1/spin/calculate-odds`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ invoiceAmount, premiumAmount, tokenMint }),
+  });
+  if (!res.ok) {
+    throw new Error("Failed to calculate odds");
+  }
+  return res.json();
+}
+
+export async function getPoolWallet(): Promise<string> {
+  const res = await fetch(`/api/v1/spin/pool-wallet`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch pool wallet");
+  }
+  const data = await res.json();
+  return data.publicKey;
+}
+
+export async function createLotteryEntry(
+  invoiceId: string,
+  clientWallet: string,
+  premiumAmount: number,
+  riskSlider: number,
+  txSignature?: string
+): Promise<LotteryEntry> {
+  const res = await fetch(`/api/v1/spin/entry`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ invoiceId, clientWallet, premiumAmount, riskSlider, txSignature }),
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || "Failed to create lottery entry");
+  }
+  return res.json();
+}
+
+export async function settleLottery(entryId: string): Promise<LotteryResult> {
+  const res = await fetch(`/api/v1/spin/settle/${entryId}`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to settle lottery");
+  }
+  return res.json();
+}
+
+export async function getLotteryEntry(entryId: string): Promise<LotteryEntry> {
+  const res = await fetch(`/api/v1/spin/entry/${entryId}`);
+  if (!res.ok) {
+    throw new Error("Lottery entry not found");
+  }
+  return res.json();
+}
+
+export interface RecentWin {
+  clientWallet: string;
+  amountWon: number;
+  premiumPaid: number;
+  memo: string;
+  timestamp: number;
+}
+
+export async function getRecentWins(): Promise<RecentWin[]> {
+  const res = await fetch(`/api/v1/spin/recent-wins`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch recent wins");
+  }
+  return res.json();
 }

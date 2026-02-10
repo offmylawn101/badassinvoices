@@ -7,7 +7,7 @@ import {
 import QRCode from "qrcode";
 import crypto from "crypto";
 
-const SOLANA_RPC = process.env.SOLANA_RPC || "https://api.devnet.solana.com";
+const SOLANA_RPC = process.env.SOLANA_RPC || "https://api.mainnet-beta.solana.com";
 const connection = new Connection(SOLANA_RPC);
 
 // USDC mint addresses
@@ -54,7 +54,7 @@ export function generatePaymentLink(
   params.append("reference", reference.toString());
 
   // Add label and message
-  params.append("label", "InvoiceNow");
+  params.append("label", "BadassInvoices");
   if (memo) {
     params.append("message", `Invoice ${invoiceId}: ${memo}`);
   } else {
@@ -132,7 +132,7 @@ export async function createSolanaPayTransaction(
   const memoInstruction = {
     keys: [],
     programId: new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
-    data: Buffer.from(`InvoiceNow:${invoiceId}`),
+    data: Buffer.from(`BadassInvoices:${invoiceId}`),
   };
   transaction.add(memoInstruction);
 
@@ -153,13 +153,14 @@ export async function createSolanaPayTransaction(
 
 /**
  * Verify a payment transaction on-chain
+ * Returns { verified: boolean, actualAmount?: number, error?: string }
  */
 export async function verifyPayment(
   signature: string,
   expectedRecipient: string,
   expectedAmount: number,
   expectedMint: string
-): Promise<boolean> {
+): Promise<{ verified: boolean; actualAmount?: number; error?: string }> {
   try {
     const tx = await connection.getTransaction(signature, {
       commitment: "confirmed",
@@ -167,21 +168,80 @@ export async function verifyPayment(
     });
 
     if (!tx || !tx.meta) {
-      return false;
+      return { verified: false, error: "Transaction not found or not confirmed" };
     }
 
     // Check if transaction was successful
     if (tx.meta.err) {
-      return false;
+      return { verified: false, error: "Transaction failed on-chain" };
     }
 
-    // TODO: Parse transaction to verify recipient and amount
-    // This is simplified - in production, parse the actual transfer amounts
+    const recipientPubkey = new PublicKey(expectedRecipient);
 
-    return true;
+    // Handle native SOL transfers
+    if (expectedMint === SOL_MINT) {
+      const accountKeys = tx.transaction.message.getAccountKeys();
+      const recipientIndex = accountKeys.staticAccountKeys.findIndex(
+        (key) => key.equals(recipientPubkey)
+      );
+
+      if (recipientIndex === -1) {
+        return { verified: false, error: "Recipient not found in transaction" };
+      }
+
+      // Calculate SOL received by recipient (postBalance - preBalance)
+      const preBalance = tx.meta.preBalances[recipientIndex];
+      const postBalance = tx.meta.postBalances[recipientIndex];
+      const actualAmount = postBalance - preBalance;
+
+      if (actualAmount < expectedAmount) {
+        return {
+          verified: false,
+          actualAmount,
+          error: `Insufficient amount: expected ${expectedAmount}, got ${actualAmount}`
+        };
+      }
+
+      return { verified: true, actualAmount };
+    }
+
+    // Handle SPL token transfers
+    if (tx.meta.preTokenBalances && tx.meta.postTokenBalances) {
+      // Find token balance changes for the expected mint and recipient
+      const recipientAta = await getAssociatedTokenAddress(
+        new PublicKey(expectedMint),
+        recipientPubkey
+      );
+      const recipientAtaStr = recipientAta.toString();
+
+      // Find pre and post balances for recipient's ATA
+      const preTokenBalance = tx.meta.preTokenBalances.find(
+        (b) => b.mint === expectedMint && b.owner === expectedRecipient
+      );
+      const postTokenBalance = tx.meta.postTokenBalances.find(
+        (b) => b.mint === expectedMint && b.owner === expectedRecipient
+      );
+
+      // Calculate amount received
+      const preBal = preTokenBalance ? parseInt(preTokenBalance.uiTokenAmount.amount) : 0;
+      const postBal = postTokenBalance ? parseInt(postTokenBalance.uiTokenAmount.amount) : 0;
+      const actualAmount = postBal - preBal;
+
+      if (actualAmount < expectedAmount) {
+        return {
+          verified: false,
+          actualAmount,
+          error: `Insufficient token amount: expected ${expectedAmount}, got ${actualAmount}`
+        };
+      }
+
+      return { verified: true, actualAmount };
+    }
+
+    return { verified: false, error: "No token transfers found in transaction" };
   } catch (error) {
     console.error("Payment verification error:", error);
-    return false;
+    return { verified: false, error: String(error) };
   }
 }
 

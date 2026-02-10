@@ -75,7 +75,7 @@ export async function sendReminderEmail(
     <body>
       <div class="container">
         <div class="header">
-          <h1>InvoiceNow</h1>
+          <h1>BadassInvoices</h1>
         </div>
         <div class="content">
           <p class="${urgency === "urgent" ? "urgent" : ""}">${intro}</p>
@@ -97,7 +97,7 @@ export async function sendReminderEmail(
           </p>
         </div>
         <div class="footer">
-          <p>Powered by InvoiceNow</p>
+          <p>Powered by BadassInvoices</p>
           <p>This is reminder #${invoice.reminder_count + 1} for this invoice.</p>
         </div>
       </div>
@@ -106,7 +106,7 @@ export async function sendReminderEmail(
   `;
 
   await transporter.sendMail({
-    from: `InvoiceNow <${FROM_EMAIL}>`,
+    from: `BadassInvoices <${FROM_EMAIL}>`,
     to: invoice.client_email,
     subject,
     html,
@@ -179,9 +179,9 @@ export async function sendWeeklySummary(
   `;
 
   await transporter.sendMail({
-    from: `InvoiceNow <${FROM_EMAIL}>`,
+    from: `BadassInvoices <${FROM_EMAIL}>`,
     to: email,
-    subject: "Your Weekly Invoice Summary - InvoiceNow",
+    subject: "Your Weekly Invoice Summary - BadassInvoices",
     html,
   });
 }
