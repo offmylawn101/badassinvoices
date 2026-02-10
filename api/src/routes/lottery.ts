@@ -12,8 +12,8 @@ const ADMIN_KEY = process.env.ADMIN_API_KEY || "";
 
 // Default pool settings
 const DEFAULT_HOUSE_EDGE_BPS = 500; // 5%
-const DEFAULT_MIN_RESERVE_BPS = 2000; // 20%
-const DEFAULT_MAX_WIN_BPS = 1000; // 10%
+const DEFAULT_MIN_RESERVE_BPS = 0; // 0% reserve - use full pool
+const DEFAULT_MAX_WIN_BPS = 10000; // 100% - allow full pool as max win
 const MIN_POOL_THRESHOLD = 5_000_000; // 5 USDC (in smallest units) - lowered for launch
 
 // Simple in-memory rate limiter
@@ -192,8 +192,10 @@ router.post("/entry", async (req: Request, res: Response) => {
       return;
     }
 
-    if (invoice.status !== "pending") {
-      res.status(400).json({ error: "Invoice is not pending" });
+    // Allow both "pending" (not yet verified) and "paid" (just verified in same flow)
+    // The txSignature proves payment was made
+    if (invoice.status !== "pending" && invoice.status !== "paid") {
+      res.status(400).json({ error: "Invoice is not payable" });
       return;
     }
 

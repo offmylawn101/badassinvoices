@@ -302,7 +302,7 @@ function LandingPage() {
                 WIN = FREE!
               </div>
               <div className="absolute bottom-4 left-4 bg-lucky-red/20 border border-lucky-red/50 rounded-lg px-3 py-1 text-lucky-red text-sm font-bold animate-bounce" style={{ animationDelay: '0.5s' }}>
-                LOSE = Paid
+                LOSE = Pay 2x
               </div>
             </div>
           </div>
@@ -335,7 +335,7 @@ function LandingPage() {
             <StepCard
               number="3"
               title="Spin & Settle"
-              description="The wheel spins. WIN = Full refund. LOSE = Invoice paid. Either way, you get paid!"
+              description="The wheel spins. WIN = Full refund. LOSE = Pay 2x. Either way, you get paid!"
               icon="🎰"
             />
           </div>

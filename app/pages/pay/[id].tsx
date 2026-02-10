@@ -20,7 +20,8 @@ import {
   createLotteryEntry,
   settleLottery,
   getPoolWallet,
-  LotteryResult,
+  getLotteryPool,
+  LotteryPool,
 } from "@/lib/api";
 
 interface PaymentLineItem {
@@ -53,8 +54,9 @@ export default function PaymentPage() {
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
 
-  // Pool wallet for lottery payments
+  // Pool wallet and data for lottery payments
   const [poolWalletAddress, setPoolWalletAddress] = useState<string | null>(null);
+  const [poolData, setPoolData] = useState<LotteryPool | null>(null);
 
   // Double or Nothing state
   const [doubleOrNothing, setDoubleOrNothing] = useState(false);
@@ -74,6 +76,15 @@ export default function PaymentPage() {
       .then(setPoolWalletAddress)
       .catch(() => console.warn("Could not fetch pool wallet"));
   }, [router.isReady, id]);
+
+  // Fetch pool data when we have invoice data
+  useEffect(() => {
+    if (data?.tokenMint) {
+      getLotteryPool(data.tokenMint)
+        .then(setPoolData)
+        .catch(() => setPoolData(null));
+    }
+  }, [data?.tokenMint]);
 
   useEffect(() => {
     if (connected && publicKey && data) {
@@ -131,11 +142,28 @@ export default function PaymentPage() {
     return walletBalance >= getPaymentAmount() + feeBuffer;
   }, [walletBalance, getPaymentAmount, data]);
 
-  // Can afford double?
-  const canAffordDouble = useCallback(() => {
+  // Can play double or nothing? (must afford 2x AND invoice must be <= max win)
+  const canPlayDouble = useCallback(() => {
     if (!data || walletBalance === null) return false;
-    return walletBalance >= data.amount * 2;
-  }, [data, walletBalance]);
+    if (walletBalance < data.amount * 2) return false;
+    // Check if pool allows this invoice amount as a win
+    if (!poolData || !poolData.lotteryAvailable) return false;
+    if (data.amount > poolData.maxWin) return false;
+    return true;
+  }, [data, walletBalance, poolData]);
+
+  // Reason why double or nothing is unavailable
+  const doubleUnavailableReason = useCallback(() => {
+    if (!data) return null;
+    if (!poolData || !poolData.lotteryAvailable) return "Pool unavailable";
+    if (data.amount > poolData.maxWin) {
+      return `Invoice exceeds max win (${formatAmount(poolData.maxWin, data.tokenMint)})`;
+    }
+    if (walletBalance !== null && walletBalance < data.amount * 2) {
+      return "Insufficient balance for 2x";
+    }
+    return null;
+  }, [data, poolData, walletBalance]);
 
   async function handlePay() {
     if (!publicKey || !signTransaction || !data) {
@@ -308,14 +336,17 @@ export default function PaymentPage() {
         const won = result.won;
 
         // Calculate wheel rotation based on BACKEND result
-        // 12 alternating segments (30° each): even=WIN, odd=LOSE
+        // 12 alternating segments (30° each): even=WIN (FREE), odd=LOSE (PAY 2X)
+        // Wheel rotates clockwise, pointer is fixed at top
+        // To land on segment N, we rotate so segment N comes to top
         const winSegments = [0, 2, 4, 6, 8, 10];
         const loseSegments = [1, 3, 5, 7, 9, 11];
         const segments = won ? winSegments : loseSegments;
         const segment = segments[Math.floor(Math.random() * segments.length)];
-        // Land in the middle of the segment (5° margin from edges for visual clarity)
-        const segmentStart = segment * 30;
-        const finalAngle = segmentStart + 5 + Math.random() * 20;
+        // Segment N starts at N*30° from top. To bring it back to top, rotate by -N*30 (or 360-N*30)
+        // Add offset to land in middle of segment (not on edge)
+        const segmentCenter = segment * 30 + 15; // center of segment
+        const finalAngle = 360 - segmentCenter + (Math.random() * 10 - 5); // ±5° jitter
         const totalRotation = 5 * 360 + finalAngle;
 
         // Show the wheel at 0°, then trigger animation after paint
@@ -447,6 +478,12 @@ export default function PaymentPage() {
                         const x2 = 50 + 50 * Math.cos(endRad);
                         const y2 = 50 + 50 * Math.sin(endRad);
 
+                        // Text position: middle of segment, 65% out from center
+                        const midAngle = startAngle + segmentAngle / 2;
+                        const midRad = (midAngle * Math.PI) / 180;
+                        const textX = 50 + 32 * Math.cos(midRad);
+                        const textY = 50 + 32 * Math.sin(midRad);
+
                         return (
                           <g key={i}>
                             <path
@@ -456,16 +493,16 @@ export default function PaymentPage() {
                               strokeWidth="0.5"
                             />
                             <text
-                              x="50"
-                              y="18"
+                              x={textX}
+                              y={textY}
                               fill="white"
-                              fontSize="6"
+                              fontSize="5"
                               fontWeight="bold"
                               textAnchor="middle"
-                              transform={`rotate(${startAngle + 15}, 50, 50)`}
-                              style={{ textShadow: '1px 1px 2px black' }}
+                              dominantBaseline="middle"
+                              transform={`rotate(${midAngle + 90}, ${textX}, ${textY})`}
                             >
-                              {isWin ? 'FREE' : 'PAID'}
+                              {isWin ? 'FREE' : 'PAY 2X'}
                             </text>
                           </g>
                         );
@@ -507,14 +544,9 @@ export default function PaymentPage() {
                   <>
                     <div className="text-7xl mb-4 text-lucky-red">X</div>
                     <h2 className="text-3xl font-bold text-gray-300 mb-4">Better Luck Next Time!</h2>
-                    <p className="text-gray-400 mb-4 text-lg">
-                      Your invoice has been paid.
+                    <p className="text-gray-400 mb-6 text-lg">
+                      You paid 2x on this invoice.
                     </p>
-                    <div className="bg-casino-black/50 border border-gray-600 rounded-lg p-4 mb-6">
-                      <p className="text-gray-400">
-                        You paid {formatAmount(getPaymentAmount(), data.tokenMint)}
-                      </p>
-                    </div>
                   </>
                 )}
                 <button
@@ -547,246 +579,156 @@ export default function PaymentPage() {
         </div>
       </header>
 
-      <main className="max-w-lg mx-auto px-4 py-12">
-        <div className="bg-casino-dark rounded-xl shadow-lg overflow-hidden border border-gold/20">
+      <main className="max-w-md mx-auto px-4 py-8">
+        <div className="bg-casino-dark rounded-2xl shadow-xl overflow-hidden border border-gold/20">
           {/* Status Banner */}
           {isPaid && (
-            <div className="bg-lucky-green text-white text-center py-3 font-bold text-lg">
+            <div className="bg-lucky-green text-white text-center py-2 font-bold">
               PAID
             </div>
           )}
           {isOverdue && !isPaid && (
-            <div className="bg-lucky-red text-white text-center py-3 font-bold">
+            <div className="bg-lucky-red text-white text-center py-2 font-bold">
               OVERDUE
             </div>
           )}
 
-          <div className="p-8">
-            {/* Invoice ID */}
-            <div className="text-center mb-6">
-              <p className="text-gray-500 text-sm">Invoice</p>
-              <p className="font-mono font-medium text-lg text-gray-300">{data.id}</p>
-            </div>
-
-            {/* Line Items Table */}
-            {data.lineItems && data.lineItems.length > 0 && (
-              <div className="mb-6 border border-gold/20 rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-casino-black/50 text-gray-500">
-                      <th className="text-left px-4 py-2 font-medium">Description</th>
-                      <th className="text-center px-2 py-2 font-medium">Qty</th>
-                      <th className="text-right px-3 py-2 font-medium">Price</th>
-                      <th className="text-right px-4 py-2 font-medium">Subtotal</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.lineItems.map((item, i) => (
-                      <tr key={i} className="border-t border-gray-700/50">
-                        <td className="px-4 py-2 text-gray-300">{item.description}</td>
-                        <td className="px-2 py-2 text-center text-gray-400">{item.quantity}</td>
-                        <td className="px-3 py-2 text-right text-gray-400">
-                          {formatAmount(item.unitPrice, data.tokenMint)}
-                        </td>
-                        <td className="px-4 py-2 text-right text-gray-300">
-                          {formatAmount(item.quantity * item.unitPrice, data.tokenMint)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Amount */}
-            <div className="text-center mb-6">
-              <p className="text-gray-500 text-sm">
-                {data.lineItems && data.lineItems.length > 0 ? "Total" : "Invoice Amount"}
-              </p>
-              <p className="text-4xl font-bold gradient-text">
+          <div className="p-6">
+            {/* Amount Hero */}
+            <div className="text-center py-6">
+              <p className="text-5xl font-bold text-white mb-1">
                 {formatAmount(data.amount, data.tokenMint)}
               </p>
-              <p className="text-gray-500 text-sm mt-1">
-                {getTokenSymbol(data.tokenMint)}
+              <p className="text-gray-500 text-sm">
+                Due {new Date(data.dueDate * 1000).toLocaleDateString()}
               </p>
             </div>
 
-            {/* Details */}
-            <div className="space-y-3 mb-6 text-sm">
-              <div className="flex justify-between py-2 border-b border-gray-700">
-                <span className="text-gray-500">Due Date</span>
-                <span className={isOverdue && !isPaid ? "text-lucky-red font-medium" : "text-gray-300"}>
-                  {new Date(data.dueDate * 1000).toLocaleDateString()}
-                </span>
-              </div>
+            {/* Invoice Details */}
+            <div className="bg-casino-black/50 rounded-xl p-4 mb-6 space-y-3 text-sm">
               {data.memo && (
-                <div className="py-2 border-b border-gray-700">
-                  <p className="text-gray-500 text-sm mb-1">Description</p>
-                  <p className="text-gray-300">{data.memo}</p>
+                <div>
+                  <p className="text-gray-500 mb-1">For</p>
+                  <p className="text-white">{data.memo}</p>
                 </div>
               )}
-              <div className="flex justify-between py-2 border-b border-gray-700">
-                <span className="text-gray-500">Pay to</span>
-                <span className="font-mono text-sm text-gray-300">
+              {data.lineItems && data.lineItems.length > 0 && (
+                <div className="pt-2 border-t border-gray-700/50">
+                  {data.lineItems.map((item, i) => (
+                    <div key={i} className="flex justify-between py-1">
+                      <span className="text-gray-400">
+                        {item.description} {item.quantity > 1 && `×${item.quantity}`}
+                      </span>
+                      <span className="text-gray-300">
+                        {formatAmount(item.quantity * item.unitPrice, data.tokenMint)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex justify-between pt-2 border-t border-gray-700/50">
+                <span className="text-gray-500">To</span>
+                <span className="font-mono text-gray-300">
                   {data.creatorWallet.slice(0, 4)}...{data.creatorWallet.slice(-4)}
                 </span>
               </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Invoice</span>
+                <span className="font-mono text-gray-400 text-xs">{data.id}</span>
+              </div>
             </div>
 
-            {/* Double or Nothing Section */}
+            {/* Payment Section */}
             {!isPaid && connected && (
-              <div className="mb-8 bg-gradient-to-br from-casino-black to-casino-dark rounded-xl p-6 border border-gold/30">
-                <div className="flex items-center justify-between mb-5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl text-gold">$</span>
-                    <h3 className="font-bold text-lg text-gold">DOUBLE OR NOTHING</h3>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-gray-500">Your Balance</p>
-                    <p className={`font-mono text-sm ${hasEnoughBalance() ? 'text-lucky-green' : 'text-lucky-red'}`}>
-                      {checkingBalance ? '...' : walletBalance !== null ? formatAmount(walletBalance, data.tokenMint) : 'N/A'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Two Option Cards */}
-                <div className="grid grid-cols-2 gap-3 mb-5">
-                  {/* Pay Normal */}
+              <>
+                {/* Payment Mode Toggle */}
+                <div className="flex gap-2 mb-4">
                   <button
                     onClick={() => setDoubleOrNothing(false)}
-                    className={`relative rounded-xl p-4 border-2 transition-all text-center ${
+                    className={`flex-1 py-3 rounded-xl font-semibold transition-all ${
                       !doubleOrNothing
-                        ? 'border-gold bg-gold/10 shadow-lg shadow-gold/10'
-                        : 'border-gray-700 bg-casino-black/50 hover:border-gray-500'
+                        ? 'bg-gold text-casino-black'
+                        : 'bg-casino-black border border-gray-700 text-gray-400 hover:border-gray-500'
                     }`}
                   >
-                    {!doubleOrNothing && (
-                      <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-gold flex items-center justify-center">
-                        <svg className="w-3 h-3 text-casino-black" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                        </svg>
-                      </div>
-                    )}
-                    <p className="text-2xl mb-1">💳</p>
-                    <p className={`font-bold text-sm ${!doubleOrNothing ? 'text-gold' : 'text-gray-400'}`}>
-                      Pay Normal
-                    </p>
-                    <p className="text-lg font-bold text-white mt-1">
-                      {formatAmount(data.amount, data.tokenMint)}
-                    </p>
+                    Pay Normal
                   </button>
-
-                  {/* Double or Nothing */}
                   <button
-                    onClick={() => canAffordDouble() && setDoubleOrNothing(true)}
-                    disabled={!canAffordDouble()}
-                    className={`relative rounded-xl p-4 border-2 transition-all text-center disabled:opacity-40 disabled:cursor-not-allowed ${
+                    onClick={() => canPlayDouble() && setDoubleOrNothing(true)}
+                    disabled={!canPlayDouble()}
+                    className={`flex-1 py-3 rounded-xl font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
                       doubleOrNothing
-                        ? 'border-lucky-green bg-lucky-green/10 shadow-lg shadow-lucky-green/10'
-                        : 'border-gray-700 bg-casino-black/50 hover:border-lucky-green/50'
+                        ? 'bg-gradient-to-r from-lucky-green to-emerald-500 text-white'
+                        : 'bg-casino-black border border-gray-700 text-gray-400 hover:border-lucky-green/50'
                     }`}
                   >
-                    {doubleOrNothing && (
-                      <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-lucky-green flex items-center justify-center">
-                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                        </svg>
-                      </div>
-                    )}
-                    <p className="text-2xl mb-1">🎰</p>
-                    <p className={`font-bold text-sm ${doubleOrNothing ? 'text-lucky-green' : 'text-gray-400'}`}>
-                      Double or Nothing
-                    </p>
-                    <p className="text-lg font-bold text-white mt-1">
-                      {formatAmount(data.amount * 2, data.tokenMint)}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">50% chance FREE</p>
+                    Double or Nothing
                   </button>
                 </div>
 
-                {!canAffordDouble() && walletBalance !== null && (
-                  <p className="text-xs text-lucky-red mb-3 text-center">
-                    Insufficient balance for Double or Nothing
+                {/* Why Double or Nothing is unavailable */}
+                {!canPlayDouble() && doubleUnavailableReason() && (
+                  <p className="text-xs text-gray-500 mb-4 text-center">
+                    {doubleUnavailableReason()}
                   </p>
                 )}
 
-                {/* Payment Summary */}
-                <div className="bg-casino-black/50 rounded-lg p-4 space-y-3 border border-gold/20">
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Invoice Amount</span>
-                    <span className="text-gray-200">{formatAmount(data.amount, data.tokenMint)}</span>
-                  </div>
-                  {doubleOrNothing && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Lottery Stake (equal to invoice)</span>
-                      <span className="text-gold">+{formatAmount(data.amount, data.tokenMint)}</span>
-                    </div>
-                  )}
-                  <div className="border-t border-gold/20 pt-3 flex justify-between font-bold text-lg">
-                    <span className="text-white">You Pay</span>
-                    <span className="text-gold">{formatAmount(getPaymentAmount(), data.tokenMint)}</span>
-                  </div>
-                </div>
-
-                {/* Win Info */}
+                {/* Double or Nothing Info */}
                 {doubleOrNothing && (
-                  <div className="mt-4 text-center p-4 bg-lucky-green/10 border border-lucky-green/30 rounded-lg">
-                    <p className="text-sm text-gray-400 mb-1">YOUR ODDS</p>
-                    <p className="text-5xl font-bold text-lucky-green">50/50</p>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                      <div className="bg-lucky-green/10 rounded-lg p-2">
-                        <span className="text-lucky-green font-bold">WIN</span>
-                        <span className="text-gray-400"> = Full refund</span>
-                      </div>
-                      <div className="bg-lucky-red/10 rounded-lg p-2">
-                        <span className="text-lucky-red font-bold">LOSE</span>
-                        <span className="text-gray-400"> = Invoice paid</span>
-                      </div>
-                    </div>
+                  <div className="bg-lucky-green/10 border border-lucky-green/30 rounded-xl p-4 mb-4 text-center">
+                    <p className="text-3xl font-bold text-lucky-green mb-2">50/50 CHANCE</p>
+                    <p className="text-sm text-gray-400">
+                      Win = <span className="text-lucky-green font-semibold">Full refund</span> ·
+                      Lose = <span className="text-gray-300">Pay 2x</span>
+                    </p>
+                    <p className="text-xs text-gray-500 mt-2">
+                      You pay {formatAmount(data.amount * 2, data.tokenMint)} (2× invoice)
+                    </p>
                   </div>
                 )}
-              </div>
-            )}
 
-            {/* Pay Button */}
-            {!isPaid && (
-              <>
-                {!connected ? (
-                  <div className="text-center">
-                    <p className="text-gray-400 mb-4">Connect your wallet to pay</p>
-                    <WalletMultiButton />
-                  </div>
-                ) : (
-                  <button
-                    onClick={handlePay}
-                    disabled={paying || !hasEnoughBalance()}
-                    className={`w-full py-4 rounded-lg font-bold text-lg transition disabled:opacity-50 disabled:cursor-not-allowed ${
-                      doubleOrNothing
-                        ? "bg-gradient-to-r from-lucky-red to-gold text-white hover:from-gold hover:to-lucky-red glow-gold"
-                        : "bg-gradient-to-r from-gold to-gold-dark text-casino-black hover:from-gold-dark hover:to-gold"
-                    }`}
-                  >
-                    {paying ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <span className="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full"></span>
-                        Processing...
-                      </span>
-                    ) : !hasEnoughBalance() ? (
-                      "Insufficient Balance"
-                    ) : doubleOrNothing ? (
-                      <>DOUBLE OR NOTHING — {formatAmount(getPaymentAmount(), data.tokenMint)}</>
-                    ) : (
-                      <>Pay {formatAmount(getPaymentAmount(), data.tokenMint)}</>
-                    )}
-                  </button>
+                {/* Balance Warning */}
+                {!hasEnoughBalance() && walletBalance !== null && (
+                  <p className="text-sm text-lucky-red mb-4 text-center">
+                    Insufficient balance ({formatAmount(walletBalance, data.tokenMint)} available)
+                  </p>
                 )}
+
+                {/* Pay Button */}
+                <button
+                  onClick={handlePay}
+                  disabled={paying || !hasEnoughBalance()}
+                  className={`w-full py-4 rounded-xl font-bold text-lg transition disabled:opacity-50 disabled:cursor-not-allowed ${
+                    doubleOrNothing
+                      ? "bg-gradient-to-r from-lucky-green to-emerald-500 text-white hover:shadow-lg hover:shadow-lucky-green/25"
+                      : "bg-gradient-to-r from-gold to-gold-dark text-casino-black hover:shadow-lg hover:shadow-gold/25"
+                  }`}
+                >
+                  {paying ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="animate-spin w-5 h-5 border-2 border-current border-t-transparent rounded-full"></span>
+                      Processing...
+                    </span>
+                  ) : (
+                    <>Pay {formatAmount(getPaymentAmount(), data.tokenMint)}</>
+                  )}
+                </button>
               </>
             )}
 
+            {/* Connect Wallet */}
+            {!isPaid && !connected && (
+              <div className="text-center">
+                <p className="text-gray-400 mb-4">Connect wallet to pay</p>
+                <WalletMultiButton />
+              </div>
+            )}
+
+            {/* Paid State */}
             {isPaid && (
-              <div className="text-center p-6 bg-lucky-green/20 border border-lucky-green rounded-lg">
-                <p className="text-lucky-green font-bold text-lg">
-                  This invoice has been paid.
+              <div className="text-center py-4">
+                <p className="text-lucky-green font-semibold">
+                  This invoice has been paid
                 </p>
               </div>
             )}
@@ -794,7 +736,7 @@ export default function PaymentPage() {
         </div>
 
         {/* Footer */}
-        <p className="text-center text-gray-600 text-sm mt-8">
+        <p className="text-center text-gray-600 text-xs mt-6">
           Powered by <span className="text-gold">BadassInvoices</span> on Solana
         </p>
       </main>
