@@ -4,7 +4,7 @@ import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useRouter } from "next/router";
 import Link from "next/link";
 import toast from "react-hot-toast";
-import { createInvoice, Milestone, LineItem } from "@/lib/api";
+import { createInvoice, LineItem } from "@/lib/api";
 
 const TOKENS = [
   {
@@ -26,7 +26,6 @@ export default function CreateInvoice() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(false);
-  const [showMilestones, setShowMilestones] = useState(false);
   const [showLineItems, setShowLineItems] = useState(false);
   const [form, setForm] = useState({
     clientEmail: "",
@@ -35,26 +34,11 @@ export default function CreateInvoice() {
     dueDate: "",
     memo: "",
   });
-  const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [newInvoice, setNewInvoice] = useState<{
     id: string;
     paymentLink: string;
   } | null>(null);
-
-  function addMilestone() {
-    setMilestones([...milestones, { description: "", amount: 0 }]);
-  }
-
-  function updateMilestone(index: number, field: string, value: string | number) {
-    const updated = [...milestones];
-    updated[index] = { ...updated[index], [field]: value };
-    setMilestones(updated);
-  }
-
-  function removeMilestone(index: number) {
-    setMilestones(milestones.filter((_, i) => i !== index));
-  }
 
   function addLineItem() {
     setLineItems([...lineItems, { description: "", quantity: 1, unitPrice: 0 }]);
@@ -104,14 +88,6 @@ export default function CreateInvoice() {
       // Convert date to timestamp
       const dueDate = Math.floor(new Date(form.dueDate).getTime() / 1000);
 
-      // Convert milestone amounts
-      const processedMilestones = showMilestones
-        ? milestones.map((m) => ({
-            ...m,
-            amount: Math.round(m.amount * Math.pow(10, form.token.decimals)),
-          }))
-        : undefined;
-
       // Convert line item unitPrice to smallest token units
       const processedLineItems = hasLineItems
         ? lineItems.map((li) => ({
@@ -127,7 +103,6 @@ export default function CreateInvoice() {
         tokenMint: form.token.mint,
         dueDate,
         memo: form.memo || undefined,
-        milestones: processedMilestones,
         lineItems: processedLineItems,
       });
 
@@ -426,73 +401,6 @@ export default function CreateInvoice() {
                 className="w-full px-4 py-2 bg-casino-black border border-gold/30 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-gold focus:border-transparent"
               />
             </div>
-
-            {/* Milestones Toggle */}
-            <div className="border-t border-gray-700 pt-6">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showMilestones}
-                  onChange={(e) => setShowMilestones(e.target.checked)}
-                  className="w-4 h-4 text-gold rounded border-gold/30 bg-casino-black focus:ring-gold"
-                />
-                <span className="font-medium text-gray-300">Split into milestones (escrow)</span>
-              </label>
-              <p className="text-xs text-gray-500 mt-1">
-                Client funds escrow upfront, you get paid as milestones complete
-              </p>
-            </div>
-
-            {/* Milestones */}
-            {showMilestones && (
-              <div className="space-y-4 bg-casino-black/50 p-4 rounded-lg border border-gold/20">
-                {milestones.map((milestone, index) => (
-                  <div key={index} className="flex gap-4 items-start">
-                    <div className="flex-1">
-                      <input
-                        type="text"
-                        value={milestone.description}
-                        onChange={(e) =>
-                          updateMilestone(index, "description", e.target.value)
-                        }
-                        placeholder="Milestone description"
-                        className="w-full px-3 py-2 bg-casino-black border border-gold/30 rounded-lg text-sm text-white placeholder-gray-500"
-                      />
-                    </div>
-                    <div className="w-32">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={milestone.amount || ""}
-                        onChange={(e) =>
-                          updateMilestone(
-                            index,
-                            "amount",
-                            parseFloat(e.target.value) || 0
-                          )
-                        }
-                        placeholder="Amount"
-                        className="w-full px-3 py-2 bg-casino-black border border-gold/30 rounded-lg text-sm text-white placeholder-gray-500"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => removeMilestone(index)}
-                      className="text-lucky-red hover:text-red-400 p-2"
-                    >
-                      x
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={addMilestone}
-                  className="text-gold hover:underline text-sm"
-                >
-                  + Add Milestone
-                </button>
-              </div>
-            )}
 
             {/* Submit */}
             <button

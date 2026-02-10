@@ -15,16 +15,8 @@ export interface Invoice {
   paid_at: number | null;
   tx_signature: string | null;
   payment_link: string;
-  milestones: Milestone[] | null;
   line_items: LineItem[] | null;
   reminder_count: number;
-}
-
-export interface Milestone {
-  description: string;
-  amount: number;
-  completed?: boolean;
-  completed_at?: number;
 }
 
 export interface LineItem {
@@ -40,7 +32,6 @@ export interface CreateInvoiceParams {
   tokenMint: string;
   dueDate: number;
   memo?: string;
-  milestones?: Milestone[];
   lineItems?: LineItem[];
 }
 
