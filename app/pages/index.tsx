@@ -328,9 +328,9 @@ function LandingPage() {
             />
             <StepCard
               number="2"
-              title="Client Chooses Risk"
-              description="They slide from 0-50% risk. Higher risk = bigger chance to pay nothing!"
-              icon="🎚️"
+              title="Double or Nothing"
+              description="Pay the normal amount, or go double or nothing — 50% chance to pay nothing!"
+              icon="🎰"
             />
             <StepCard
               number="3"
@@ -347,7 +347,7 @@ function LandingPage() {
         <div className="max-w-4xl mx-auto">
           <div className="bg-gradient-to-br from-casino-dark to-casino-black rounded-3xl p-8 md:p-12 border border-gold/20 shadow-2xl">
             <h3 className="text-2xl font-bold text-white mb-8 text-center">
-              Example: <span className="text-gold">$100</span> Invoice at <span className="text-gold">50%</span> Risk
+              Example: <span className="text-gold">$100</span> Invoice — <span className="text-gold">Double or Nothing</span>
             </h3>
 
             <div className="grid md:grid-cols-2 gap-6">
@@ -356,8 +356,8 @@ function LandingPage() {
                 <h4 className="text-2xl font-bold text-lucky-green mb-2">WIN</h4>
                 <p className="text-gray-400 mb-4">50% chance</p>
                 <div className="bg-casino-black/50 rounded-xl p-4">
-                  <p className="text-sm text-gray-400">Client pays $200</p>
-                  <p className="text-sm text-gray-400">Gets $200 back</p>
+                  <p className="text-sm text-gray-400">Client pays $200 (2x)</p>
+                  <p className="text-sm text-gray-400">Gets full $200 back</p>
                   <p className="text-xl font-bold text-lucky-green mt-2">= FREE Invoice!</p>
                 </div>
               </div>
@@ -367,8 +367,8 @@ function LandingPage() {
                 <h4 className="text-2xl font-bold text-lucky-red mb-2">LOSE</h4>
                 <p className="text-gray-400 mb-4">50% chance</p>
                 <div className="bg-casino-black/50 rounded-xl p-4">
-                  <p className="text-sm text-gray-400">Client pays $200</p>
-                  <p className="text-sm text-gray-400">You receive $200</p>
+                  <p className="text-sm text-gray-400">Client pays $200 (2x)</p>
+                  <p className="text-sm text-gray-400">Creator gets $100, pool keeps $100</p>
                   <p className="text-xl font-bold text-gray-300 mt-2">Invoice Settled</p>
                 </div>
               </div>

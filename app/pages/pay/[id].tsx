@@ -22,8 +22,6 @@ import {
   LotteryResult,
 } from "@/lib/api";
 
-// Use local proxy to avoid ad blocker issues
-
 interface PaymentData {
   id: string;
   creatorWallet: string;
@@ -50,8 +48,8 @@ export default function PaymentPage() {
   // Pool wallet for lottery payments
   const [poolWalletAddress, setPoolWalletAddress] = useState<string | null>(null);
 
-  // Spin to Win state
-  const [riskSlider, setRiskSlider] = useState(0); // 0-50%
+  // Double or Nothing state
+  const [doubleOrNothing, setDoubleOrNothing] = useState(false);
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [checkingBalance, setCheckingBalance] = useState(false);
   const [showSpinWheel, setShowSpinWheel] = useState(false);
@@ -113,15 +111,11 @@ export default function PaymentPage() {
     }
   }
 
-  // Calculate payment amount based on slider (0% = 1x, 50% = 2x)
+  // Payment amount: normal or 2x for double or nothing
   const getPaymentAmount = useCallback(() => {
     if (!data) return 0;
-    const multiplier = 1 + (riskSlider / 50); // 0% -> 1x, 50% -> 2x
-    return Math.floor(data.amount * multiplier);
-  }, [data, riskSlider]);
-
-  // Win chance equals slider value
-  const getWinChance = () => riskSlider;
+    return doubleOrNothing ? data.amount * 2 : data.amount;
+  }, [data, doubleOrNothing]);
 
   // Check if wallet has enough balance
   const hasEnoughBalance = useCallback(() => {
@@ -129,26 +123,11 @@ export default function PaymentPage() {
     return walletBalance >= getPaymentAmount();
   }, [walletBalance, getPaymentAmount]);
 
-  // Get max allowed slider value based on wallet balance
-  const getMaxSlider = useCallback(() => {
-    if (!data || walletBalance === null) return 50; // Default to max until balance is known
-    // Find max slider where payment <= balance
-    // payment = amount * (1 + slider/50)
-    // balance >= amount * (1 + slider/50)
-    // balance/amount >= 1 + slider/50
-    // balance/amount - 1 >= slider/50
-    // (balance/amount - 1) * 50 >= slider
-    const max = Math.floor((walletBalance / data.amount - 1) * 50);
-    return Math.min(50, Math.max(0, max));
+  // Can afford double?
+  const canAffordDouble = useCallback(() => {
+    if (!data || walletBalance === null) return false;
+    return walletBalance >= data.amount * 2;
   }, [data, walletBalance]);
-
-  // Clamp slider when maxSlider changes (e.g., after balance loads)
-  const maxSlider = getMaxSlider();
-  useEffect(() => {
-    if (riskSlider > maxSlider) {
-      setRiskSlider(maxSlider);
-    }
-  }, [maxSlider, riskSlider]);
 
   async function handlePay() {
     if (!publicKey || !signTransaction || !data) {
@@ -171,7 +150,7 @@ export default function PaymentPage() {
       const paymentAmount = getPaymentAmount();
       const invoiceAmount = data.amount;
       const premiumAmount = paymentAmount - invoiceAmount;
-      const isLottery = riskSlider > 0 && premiumAmount > 0 && poolWalletAddress;
+      const isLottery = doubleOrNothing && premiumAmount > 0 && poolWalletAddress;
 
       const transaction = new Transaction();
 
@@ -289,12 +268,11 @@ export default function PaymentPage() {
         throw new Error("Transaction confirmation timeout");
       }
 
-      // If using spin (slider > 0), show the wheel
-      if (riskSlider > 0) {
+      // If double or nothing, show the wheel
+      if (doubleOrNothing) {
         const premiumPaid = paymentAmount - data.amount;
 
         // Verify payment on-chain first (marks invoice as paid in DB)
-        // Pass expectedAmount = invoiceAmount since creator only receives that portion
         await fetch(`/api/v1/hooks/verify-payment`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -305,12 +283,12 @@ export default function PaymentPage() {
           }),
         });
 
-        // Create lottery entry with riskSlider so backend uses correct probability
+        // Create lottery entry — always riskSlider=50 for double or nothing
         const entry = await createLotteryEntry(
           data.id,
           publicKey.toString(),
           premiumPaid,
-          riskSlider,
+          50,
           signature
         );
 
@@ -319,18 +297,16 @@ export default function PaymentPage() {
         const won = result.won;
 
         // Calculate wheel rotation based on BACKEND result
-        // Wheel has WIN and LOSE sections
-        // WIN section is riskSlider% of wheel, LOSE is rest
-        // We animate to land on the correct section based on actual result
-        const baseRotations = 5; // Number of full rotations
+        // 50/50 wheel — first 180deg is WIN, second 180deg is LOSE
+        const baseRotations = 5;
         let finalAngle: number;
 
         if (won) {
-          // Land in WIN section (0 to riskSlider% of 360)
-          finalAngle = Math.random() * (riskSlider / 100 * 360);
+          // Land in WIN section (0-180 degrees)
+          finalAngle = Math.random() * 180;
         } else {
-          // Land in LOSE section (riskSlider% to 100% of 360)
-          finalAngle = (riskSlider / 100 * 360) + Math.random() * ((100 - riskSlider) / 100 * 360);
+          // Land in LOSE section (180-360 degrees)
+          finalAngle = 180 + Math.random() * 180;
         }
 
         const totalRotation = baseRotations * 360 + finalAngle;
@@ -398,7 +374,6 @@ export default function PaymentPage() {
 
   const isPaid = data.status === "paid";
   const isOverdue = data.dueDate < Math.floor(Date.now() / 1000);
-  const canSpin = riskSlider > 0;
 
   return (
     <div className="min-h-screen bg-casino-black">
@@ -433,7 +408,7 @@ export default function PaymentPage() {
                     ))}
                   </div>
 
-                  {/* The Wheel */}
+                  {/* The Wheel — 50/50 split */}
                   <div
                     className="absolute inset-3 rounded-full overflow-hidden shadow-inner"
                     style={{
@@ -441,19 +416,13 @@ export default function PaymentPage() {
                       transition: 'transform 4s cubic-bezier(0.17, 0.67, 0.12, 0.99)'
                     }}
                   >
-                    {/* Wheel segments - alternating WIN (green) and LOSE (red) */}
                     <svg viewBox="0 0 100 100" className="w-full h-full">
-                      {/* Create 12 segments - distribute WIN/LOSE based on odds */}
+                      {/* 12 segments alternating WIN/LOSE — 6 each for 50/50 */}
                       {[...Array(12)].map((_, i) => {
                         const segmentAngle = 30;
                         const startAngle = i * segmentAngle - 90;
                         const endAngle = startAngle + segmentAngle;
-
-                        // Calculate which rotation would land on this segment
-                        // Segment i is hit when rotation is around (360 - i*30 - 15)
-                        const segmentCenterRotation = (360 - i * 30 - 15 + 360) % 360;
-                        const winAngle = riskSlider * 3.6; // riskSlider% of 360
-                        const isWin = segmentCenterRotation < winAngle;
+                        const isWin = i % 2 === 0;
 
                         const color = isWin ? '#22C55E' : '#DC2626';
                         const darkerColor = isWin ? '#16A34A' : '#B91C1C';
@@ -469,11 +438,10 @@ export default function PaymentPage() {
                           <g key={i}>
                             <path
                               d={`M 50 50 L ${x1} ${y1} A 50 50 0 0 1 ${x2} ${y2} Z`}
-                              fill={i % 2 === 0 ? color : darkerColor}
+                              fill={i % 4 < 2 ? color : darkerColor}
                               stroke="#0F0F0F"
                               strokeWidth="0.5"
                             />
-                            {/* Segment label */}
                             <text
                               x="50"
                               y="18"
@@ -484,7 +452,7 @@ export default function PaymentPage() {
                               transform={`rotate(${startAngle + 15}, 50, 50)`}
                               style={{ textShadow: '1px 1px 2px black' }}
                             >
-                              {isWin ? '🎉' : '💀'}
+                              {isWin ? 'FREE' : 'PAID'}
                             </text>
                           </g>
                         );
@@ -499,10 +467,10 @@ export default function PaymentPage() {
                 </div>
 
                 <p className="text-3xl font-bold text-gold animate-pulse drop-shadow-[0_0_10px_rgba(255,215,0,0.5)]">
-                  🎰 SPINNING... 🎰
+                  SPINNING...
                 </p>
                 <p className="text-gray-400 mt-2">
-                  {riskSlider}% chance to WIN!
+                  50/50 — Double or Nothing!
                 </p>
               </>
             ) : spinResult ? (
@@ -615,13 +583,13 @@ export default function PaymentPage() {
               </div>
             </div>
 
-            {/* Spin to Win Section */}
+            {/* Double or Nothing Section */}
             {!isPaid && connected && (
               <div className="mb-8 bg-gradient-to-br from-casino-black to-casino-dark rounded-xl p-6 border border-gold/30">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-5">
                   <div className="flex items-center gap-2">
                     <span className="text-2xl text-gold">$</span>
-                    <h3 className="font-bold text-lg text-gold">SPIN TO WIN</h3>
+                    <h3 className="font-bold text-lg text-gold">DOUBLE OR NOTHING</h3>
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-gray-500">Your Balance</p>
@@ -631,34 +599,66 @@ export default function PaymentPage() {
                   </div>
                 </div>
 
-                {/* Risk Slider */}
-                <div className="mb-6">
-                  <div className="flex justify-between text-sm mb-2">
-                    <span className="text-gray-400">Risk Level</span>
-                    <span className="text-gold font-bold">{riskSlider}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max={maxSlider}
-                    value={riskSlider}
-                    onChange={(e) => setRiskSlider(Number(e.target.value))}
-                    disabled={maxSlider === 0 && walletBalance !== null}
-                    className="w-full h-3 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
-                    style={{
-                      background: `linear-gradient(to right, #FFD700 0%, #FFD700 ${maxSlider > 0 ? (riskSlider / maxSlider) * 100 : 0}%, #374151 ${maxSlider > 0 ? (riskSlider / maxSlider) * 100 : 0}%, #374151 100%)`
-                    }}
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>0% (Standard Pay)</span>
-                    <span>{maxSlider}% Max ({(1 + maxSlider/50).toFixed(1)}x Price)</span>
-                  </div>
-                  {maxSlider < 50 && (
-                    <p className="text-xs text-lucky-red mt-2">
-                      Max {maxSlider}% based on your balance
+                {/* Two Option Cards */}
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  {/* Pay Normal */}
+                  <button
+                    onClick={() => setDoubleOrNothing(false)}
+                    className={`relative rounded-xl p-4 border-2 transition-all text-center ${
+                      !doubleOrNothing
+                        ? 'border-gold bg-gold/10 shadow-lg shadow-gold/10'
+                        : 'border-gray-700 bg-casino-black/50 hover:border-gray-500'
+                    }`}
+                  >
+                    {!doubleOrNothing && (
+                      <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-gold flex items-center justify-center">
+                        <svg className="w-3 h-3 text-casino-black" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                    )}
+                    <p className="text-2xl mb-1">💳</p>
+                    <p className={`font-bold text-sm ${!doubleOrNothing ? 'text-gold' : 'text-gray-400'}`}>
+                      Pay Normal
                     </p>
-                  )}
+                    <p className="text-lg font-bold text-white mt-1">
+                      {formatAmount(data.amount, data.tokenMint)}
+                    </p>
+                  </button>
+
+                  {/* Double or Nothing */}
+                  <button
+                    onClick={() => canAffordDouble() && setDoubleOrNothing(true)}
+                    disabled={!canAffordDouble()}
+                    className={`relative rounded-xl p-4 border-2 transition-all text-center disabled:opacity-40 disabled:cursor-not-allowed ${
+                      doubleOrNothing
+                        ? 'border-lucky-green bg-lucky-green/10 shadow-lg shadow-lucky-green/10'
+                        : 'border-gray-700 bg-casino-black/50 hover:border-lucky-green/50'
+                    }`}
+                  >
+                    {doubleOrNothing && (
+                      <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-lucky-green flex items-center justify-center">
+                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                    )}
+                    <p className="text-2xl mb-1">🎰</p>
+                    <p className={`font-bold text-sm ${doubleOrNothing ? 'text-lucky-green' : 'text-gray-400'}`}>
+                      Double or Nothing
+                    </p>
+                    <p className="text-lg font-bold text-white mt-1">
+                      {formatAmount(data.amount * 2, data.tokenMint)}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">50% chance FREE</p>
+                  </button>
                 </div>
+
+                {!canAffordDouble() && walletBalance !== null && (
+                  <p className="text-xs text-lucky-red mb-3 text-center">
+                    Insufficient balance for Double or Nothing
+                  </p>
+                )}
 
                 {/* Payment Summary */}
                 <div className="bg-casino-black/50 rounded-lg p-4 space-y-3 border border-gold/20">
@@ -666,10 +666,10 @@ export default function PaymentPage() {
                     <span className="text-gray-400">Invoice Amount</span>
                     <span className="text-gray-200">{formatAmount(data.amount, data.tokenMint)}</span>
                   </div>
-                  {riskSlider > 0 && (
+                  {doubleOrNothing && (
                     <div className="flex justify-between">
-                      <span className="text-gray-400">Risk Premium (+{Math.round((riskSlider / 50) * 100)}%)</span>
-                      <span className="text-gold">+{formatAmount(getPaymentAmount() - data.amount, data.tokenMint)}</span>
+                      <span className="text-gray-400">Lottery Stake (equal to invoice)</span>
+                      <span className="text-gold">+{formatAmount(data.amount, data.tokenMint)}</span>
                     </div>
                   )}
                   <div className="border-t border-gold/20 pt-3 flex justify-between font-bold text-lg">
@@ -678,18 +678,20 @@ export default function PaymentPage() {
                   </div>
                 </div>
 
-                {/* Win Chance Display */}
-                {riskSlider > 0 && (
+                {/* Win Info */}
+                {doubleOrNothing && (
                   <div className="mt-4 text-center p-4 bg-lucky-green/10 border border-lucky-green/30 rounded-lg">
-                    <p className="text-sm text-gray-400 mb-1">YOUR WIN CHANCE</p>
-                    <p className="text-5xl font-bold text-lucky-green">{riskSlider}%</p>
-                    <div className="mt-2 text-sm">
-                      <span className="text-lucky-green font-bold">WIN</span>
-                      <span className="text-gray-400"> = Invoice FREE (full refund)</span>
-                    </div>
-                    <div className="text-sm">
-                      <span className="text-lucky-red font-bold">LOSE</span>
-                      <span className="text-gray-400"> = Pay {formatAmount(getPaymentAmount(), data.tokenMint)}</span>
+                    <p className="text-sm text-gray-400 mb-1">YOUR ODDS</p>
+                    <p className="text-5xl font-bold text-lucky-green">50/50</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                      <div className="bg-lucky-green/10 rounded-lg p-2">
+                        <span className="text-lucky-green font-bold">WIN</span>
+                        <span className="text-gray-400"> = Full refund</span>
+                      </div>
+                      <div className="bg-lucky-red/10 rounded-lg p-2">
+                        <span className="text-lucky-red font-bold">LOSE</span>
+                        <span className="text-gray-400"> = Invoice paid</span>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -709,7 +711,7 @@ export default function PaymentPage() {
                     onClick={handlePay}
                     disabled={paying || !hasEnoughBalance()}
                     className={`w-full py-4 rounded-lg font-bold text-lg transition disabled:opacity-50 disabled:cursor-not-allowed ${
-                      canSpin
+                      doubleOrNothing
                         ? "bg-gradient-to-r from-lucky-red to-gold text-white hover:from-gold hover:to-lucky-red glow-gold"
                         : "bg-gradient-to-r from-gold to-gold-dark text-casino-black hover:from-gold-dark hover:to-gold"
                     }`}
@@ -721,8 +723,8 @@ export default function PaymentPage() {
                       </span>
                     ) : !hasEnoughBalance() ? (
                       "Insufficient Balance"
-                    ) : canSpin ? (
-                      <>SPIN THE WHEEL - {formatAmount(getPaymentAmount(), data.tokenMint)}</>
+                    ) : doubleOrNothing ? (
+                      <>DOUBLE OR NOTHING — {formatAmount(getPaymentAmount(), data.tokenMint)}</>
                     ) : (
                       <>Pay {formatAmount(getPaymentAmount(), data.tokenMint)}</>
                     )}
@@ -746,30 +748,6 @@ export default function PaymentPage() {
           Powered by <span className="text-gold">BadassInvoices</span> on Solana
         </p>
       </main>
-
-      {/* Custom slider styles */}
-      <style jsx>{`
-        input[type="range"]::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 24px;
-          height: 24px;
-          border-radius: 50%;
-          background: linear-gradient(135deg, #FFD700, #B8860B);
-          cursor: pointer;
-          border: 3px solid #0F0F0F;
-          box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
-        }
-        input[type="range"]::-moz-range-thumb {
-          width: 24px;
-          height: 24px;
-          border-radius: 50%;
-          background: linear-gradient(135deg, #FFD700, #B8860B);
-          cursor: pointer;
-          border: 3px solid #0F0F0F;
-          box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
-        }
-      `}</style>
     </div>
   );
 }
